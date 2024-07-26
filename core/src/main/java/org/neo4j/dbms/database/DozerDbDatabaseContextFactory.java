@@ -37,8 +37,10 @@ import org.neo4j.io.device.DeviceMapper;
 import org.neo4j.kernel.api.Kernel;
 import org.neo4j.kernel.database.Database;
 import org.neo4j.kernel.database.DatabaseCreationContext;
+import org.neo4j.kernel.database.DatabaseTracers;
 import org.neo4j.kernel.database.GlobalAvailabilityGuardController;
 import org.neo4j.kernel.database.NamedDatabaseId;
+import org.neo4j.kernel.impl.api.CommandCommitListeners;
 import org.neo4j.kernel.impl.api.CommitProcessFactory;
 import org.neo4j.kernel.impl.api.ExternalIdReuseConditionProvider;
 import org.neo4j.kernel.impl.api.LeaseService;
@@ -120,7 +122,10 @@ public class DozerDbDatabaseContextFactory
                     createTokenHolderProvider(this::kernel),
                     new GlobalAvailabilityGuardController(globalModule.getGlobalAvailabilityGuard()),
                     components.readOnlyDatabases(),
-                    controllerService);
+                    controllerService,
+                    new DatabaseTracers(globalModule.getTracers(), namedDatabaseId),
+                    CommandCommitListeners.NO_LISTENERS,
+                    null);
             kernelDatabase = new Database(creationContext);
             context = new StandaloneDatabaseContext(kernelDatabase);
         }

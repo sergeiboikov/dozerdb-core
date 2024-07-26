@@ -30,7 +30,6 @@ import static org.neo4j.configuration.GraphDatabaseSettings.initial_default_data
 import static org.neo4j.dbms.database.DatabaseContextProviderDelegate.delegate;
 import static org.neo4j.dbms.routing.RoutingTableTTLProvider.ttlFromConfig;
 
-import java.util.function.Supplier;
 import org.neo4j.bolt.dbapi.BoltGraphDatabaseManagementServiceSPI;
 import org.neo4j.bolt.tx.TransactionManager;
 import org.neo4j.collection.Dependencies;
@@ -76,8 +75,8 @@ import org.neo4j.dbms.routing.RoutingOption;
 import org.neo4j.dbms.routing.RoutingService;
 import org.neo4j.dbms.routing.SingleAddressRoutingTableProvider;
 import org.neo4j.dbms.systemgraph.CommunityTopologyGraphComponent;
+import org.neo4j.dbms.systemgraph.SystemDatabaseProvider;
 import org.neo4j.fabric.bootstrap.FabricServicesBootstrap;
-import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.graphdb.factory.module.GlobalModule;
 import org.neo4j.internal.kernel.api.security.CommunitySecurityLog;
 import org.neo4j.io.device.DeviceMapper;
@@ -95,16 +94,15 @@ import org.neo4j.kernel.impl.api.CommitProcessFactory;
 import org.neo4j.kernel.impl.factory.CommunityCommitProcessFactory;
 import org.neo4j.kernel.impl.factory.DbmsInfo;
 import org.neo4j.kernel.impl.pagecache.CommunityIOControllerService;
-import org.neo4j.kernel.impl.security.URLAccessRules;
+import org.neo4j.kernel.impl.security.URIAccessRules;
 import org.neo4j.kernel.internal.event.GlobalTransactionEventListeners;
 import org.neo4j.kernel.lifecycle.LifeSupport;
 import org.neo4j.kernel.lifecycle.Lifecycle;
 import org.neo4j.kernel.lifecycle.LifecycleAdapter;
 import org.neo4j.logging.InternalLogProvider;
 import org.neo4j.logging.internal.LogService;
-import org.neo4j.procedure.builtin.BuiltInDbmsProcedures.UpgradeAllowedChecker.UpgradeAlwaysAllowed;
 import org.neo4j.procedure.impl.ProcedureConfig;
-import org.neo4j.router.CommunityQueryRouterBoostrap;
+import org.neo4j.router.CommunityQueryRouterBootstrap;
 import org.neo4j.server.CommunityNeoWebServer;
 import org.neo4j.server.config.AuthConfigProvider;
 import org.neo4j.server.rest.repr.CommunityAuthConfigProvider;
@@ -144,7 +142,7 @@ public class DozerDbEditionModule extends AbstractEditionModule implements Defau
 
         logProvider = globalModule.getLogService().getInternalLogProvider();
         securityLog = new CommunitySecurityLog(logProvider.getLog(CommunitySecurityModule.class));
-        globalDependencies.satisfyDependency(new URLAccessRules(securityLog, globalConfig));
+        globalDependencies.satisfyDependency(new URIAccessRules(securityLog, globalConfig));
 
         identityModule = tryResolveOrCreate(
                         ServerIdentityFactory.class,
@@ -225,7 +223,9 @@ public class DozerDbEditionModule extends AbstractEditionModule implements Defau
 
         defaultDatabaseInitializer = databaseLifecycles.defaultDatabaseStarter();
 
-        globalModule.getGlobalDependencies().satisfyDependency(new UpgradeAlwaysAllowed());
+        globalModule
+                .getGlobalDependencies()
+                .satisfyDependency(SystemGraphComponents.UpgradeChecker.UPGRADE_ALWAYS_ALLOWED);
 
         return databaseRepository;
     }
@@ -287,6 +287,7 @@ public class DozerDbEditionModule extends AbstractEditionModule implements Defau
                 userLogProvider,
                 dbmsInfo,
                 globalModule.getMemoryPools(),
+                globalModule.getGlobalMonitors(),
                 globalModule.getGlobalClock());
     }
 
@@ -324,7 +325,8 @@ public class DozerDbEditionModule extends AbstractEditionModule implements Defau
                 config,
                 () -> true,
                 defaultDatabaseResolver,
-                databaseReferenceRepo);
+                databaseReferenceRepo,
+                true);
     }
 
     @Override
@@ -338,18 +340,17 @@ public class DozerDbEditionModule extends AbstractEditionModule implements Defau
     }
 
     @Override
-    public void registerDatabaseInitializers(GlobalModule globalModule) {
-        registerSystemGraphInitializer(globalModule);
+    public void registerDatabaseInitializers(GlobalModule globalModule, SystemDatabaseProvider systemDatabaseProvider) {
+        registerSystemGraphInitializer(globalModule, systemDatabaseProvider);
         registerDefaultDatabaseInitializer(globalModule);
     }
 
-    private void registerSystemGraphInitializer(GlobalModule globalModule) {
-        Supplier<GraphDatabaseService> systemSupplier =
-                DozerDbEditionModule.systemSupplier(globalModule.getGlobalDependencies());
-        SystemGraphInitializer initializer = DozerDbEditionModule.tryResolveOrCreate(
+    private void registerSystemGraphInitializer(
+            GlobalModule globalModule, SystemDatabaseProvider systemDatabaseProvider) {
+        var initializer = AbstractEditionModule.tryResolveOrCreate(
                 SystemGraphInitializer.class,
                 globalModule.getExternalDependencyResolver(),
-                () -> new DefaultSystemGraphInitializer(systemSupplier, systemGraphComponents));
+                () -> new DefaultSystemGraphInitializer(systemDatabaseProvider::database, systemGraphComponents));
         globalModule.getGlobalDependencies().satisfyDependency(initializer);
         globalModule.getGlobalLife().add(initializer);
     }
@@ -409,10 +410,9 @@ public class DozerDbEditionModule extends AbstractEditionModule implements Defau
     }
 
     @Override
-    public void createDefaultDatabaseResolver(GlobalModule globalModule) {
-        var systemDbSupplier = systemSupplier(globalModule.getGlobalDependencies());
+    public void createDefaultDatabaseResolver(SystemDatabaseProvider systemDatabaseProvider) {
         var defaultDatabaseResolver =
-                new CommunityDefaultDatabaseResolver(globalModule.getGlobalConfig(), systemDbSupplier);
+                new CommunityDefaultDatabaseResolver(globalModule.getGlobalConfig(), systemDatabaseProvider);
         globalModule
                 .getTransactionEventListeners()
                 .registerTransactionEventListener(SYSTEM_DATABASE_NAME, defaultDatabaseResolver);
@@ -433,7 +433,7 @@ public class DozerDbEditionModule extends AbstractEditionModule implements Defau
         DatabaseContextProvider<? extends DatabaseContext> databaseRepository =
                 globalModule.getGlobalDependencies().resolveDependency(DatabaseContextProvider.class);
         if (globalModule.getGlobalConfig().get(GraphDatabaseInternalSettings.query_router_new_stack)) {
-            var queryRouterBoostrap = new CommunityQueryRouterBoostrap(
+            var queryRouterBootstrap = new CommunityQueryRouterBootstrap(
                     globalModule.getGlobalLife(),
                     globalModule.getGlobalDependencies(),
                     globalModule.getLogService(),
@@ -442,7 +442,7 @@ public class DozerDbEditionModule extends AbstractEditionModule implements Defau
                     CommunitySecurityLog.NULL_LOG);
             globalModule
                     .getGlobalDependencies()
-                    .satisfyDependency(queryRouterBoostrap.bootstrapServices(databaseManagementService));
+                    .satisfyDependency(queryRouterBootstrap.bootstrapServices(databaseManagementService));
         } else {
             var fabricServicesBootstrap = new FabricServicesBootstrap.Community(
                     globalModule.getGlobalLife(),
