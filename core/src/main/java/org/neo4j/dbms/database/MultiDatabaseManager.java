@@ -22,6 +22,10 @@ import org.neo4j.configuration.Config;
 import org.neo4j.configuration.DozerDbSettings;
 import org.neo4j.dbms.api.DatabaseExistsException;
 import org.neo4j.dbms.api.DatabaseManagementException;
+import org.neo4j.gqlstatus.ErrorClassification;
+import org.neo4j.gqlstatus.ErrorGqlStatusObjectImplementation;
+import org.neo4j.gqlstatus.GqlMessageParams;
+import org.neo4j.gqlstatus.GqlStatusInfoCodes;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.factory.module.GlobalModule;
 import org.neo4j.kernel.database.Database;
@@ -118,9 +122,12 @@ public final class MultiDatabaseManager {
             database.start();
         } catch (Throwable t) {
 
-            log.error("Failed to start " + namedDatabaseId, t);
+            var gql = ErrorGqlStatusObjectImplementation.from(GqlStatusInfoCodes.STATUS_51N40)
+                    .withParam(GqlMessageParams.namedDatabaseId, namedDatabaseId.name())
+                    .withClassification(ErrorClassification.DATABASE_ERROR)
+                    .build();
             context.fail(new UnableToStartDatabaseException(
-                    format("An error occurred! Unable to start `%s`.", namedDatabaseId), t));
+                    gql, format("An error occurred! Unable to start `%s`.", namedDatabaseId), t));
         }
     }
 

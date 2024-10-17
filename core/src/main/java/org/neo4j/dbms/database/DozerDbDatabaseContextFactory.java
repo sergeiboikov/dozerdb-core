@@ -24,7 +24,6 @@
 
 package org.neo4j.dbms.database;
 
-import java.util.Map;
 import java.util.Optional;
 import org.neo4j.configuration.DatabaseConfig;
 import org.neo4j.cypher.internal.javacompat.DozerDbCypherEngineProvider;
@@ -40,10 +39,9 @@ import org.neo4j.kernel.database.DatabaseCreationContext;
 import org.neo4j.kernel.database.DatabaseTracers;
 import org.neo4j.kernel.database.GlobalAvailabilityGuardController;
 import org.neo4j.kernel.database.NamedDatabaseId;
-import org.neo4j.kernel.impl.api.CommandCommitListeners;
-import org.neo4j.kernel.impl.api.CommitProcessFactory;
 import org.neo4j.kernel.impl.api.ExternalIdReuseConditionProvider;
 import org.neo4j.kernel.impl.api.LeaseService;
+import org.neo4j.kernel.impl.api.TransactionalProcessFactory;
 import org.neo4j.kernel.impl.constraints.DozerDbConstraintSemantics;
 import org.neo4j.kernel.impl.factory.AccessCapabilityFactory;
 import org.neo4j.kernel.impl.index.DatabaseIndexStats;
@@ -57,7 +55,7 @@ public class DozerDbDatabaseContextFactory
     private final DatabaseIndexStats.Factory indexStatsFactory;
     private final DeviceMapper deviceMapper;
     private final IOControllerService controllerService;
-    private final CommitProcessFactory commitProcessFactory;
+    private final TransactionalProcessFactory commitProcessFactory;
     private final DefaultDatabaseContextFactoryComponents components;
     private final ServerIdentity serverIdentity;
 
@@ -69,7 +67,7 @@ public class DozerDbDatabaseContextFactory
             IdContextFactory idContextFactory,
             DeviceMapper deviceMapper,
             IOControllerService controllerService,
-            CommitProcessFactory commitProcessFactory,
+            TransactionalProcessFactory commitProcessFactory,
             DefaultDatabaseContextFactoryComponents components) {
         super(globalModule, idContextFactory);
         this.serverIdentity = serverIdentity;
@@ -91,7 +89,7 @@ public class DozerDbDatabaseContextFactory
         private final StandaloneDatabaseContext context;
 
         private Creator(NamedDatabaseId namedDatabaseId) {
-            var databaseConfig = new DatabaseConfig(Map.of(), globalModule.getGlobalConfig());
+            var databaseConfig = new DatabaseConfig(globalModule.getGlobalConfig());
             var contextFactory = createContextFactory(databaseConfig, namedDatabaseId);
             var creationContext = new ModularDatabaseCreationContext(
                     HostedOnMode.SINGLE,
@@ -124,7 +122,7 @@ public class DozerDbDatabaseContextFactory
                     components.readOnlyDatabases(),
                     controllerService,
                     new DatabaseTracers(globalModule.getTracers(), namedDatabaseId),
-                    CommandCommitListeners.NO_LISTENERS,
+                    globalModule.getDefaultCommandCommitListeners(),
                     null);
             kernelDatabase = new Database(creationContext);
             context = new StandaloneDatabaseContext(kernelDatabase);

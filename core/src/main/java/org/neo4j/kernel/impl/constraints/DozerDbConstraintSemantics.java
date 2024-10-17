@@ -42,6 +42,8 @@ import org.neo4j.internal.schema.RelationTypeSchemaDescriptor;
 import org.neo4j.internal.schema.SchemaDescriptor;
 import org.neo4j.internal.schema.constraints.ConstraintDescriptorFactory;
 import org.neo4j.internal.schema.constraints.KeyConstraintDescriptor;
+import org.neo4j.internal.schema.constraints.LabelCoexistenceConstraintDescriptor;
+import org.neo4j.internal.schema.constraints.RelationshipEndpointConstraintDescriptor;
 import org.neo4j.internal.schema.constraints.TypeConstraintDescriptor;
 import org.neo4j.internal.schema.constraints.TypeRepresentation;
 import org.neo4j.internal.schema.constraints.UniquenessConstraintDescriptor;
@@ -167,6 +169,18 @@ public class DozerDbConstraintSemantics extends StandardConstraintSemantics {
     public ConstraintDescriptor createPropertyTypeConstraint(long ruleId, TypeConstraintDescriptor descriptor)
             throws CreateConstraintFailureException {
         return this.accessor.createPropertyTypeConstraint(ruleId, descriptor);
+    }
+
+    @Override
+    public ConstraintDescriptor createRelationshipEndpointConstraint(
+            long ruleId, RelationshipEndpointConstraintDescriptor descriptor) throws CreateConstraintFailureException {
+        return this.accessor.createRelationshipEndpointConstraint(ruleId, descriptor);
+    }
+
+    @Override
+    public ConstraintDescriptor createLabelCoexistenceConstraint(
+            long ruleId, LabelCoexistenceConstraintDescriptor descriptor) throws CreateConstraintFailureException {
+        return this.accessor.createLabelCoexistenceConstraint(ruleId, descriptor);
     }
 
     @Override
@@ -310,5 +324,32 @@ public class DozerDbConstraintSemantics extends StandardConstraintSemantics {
                 throw new CreateConstraintFailureException(propertyTypeException.constraint(), propertyTypeException);
             }
         }
+    }
+
+    @Override
+    public void validateRelationshipEndpointConstraint(
+            RelationshipScanCursor relCursor,
+            NodeCursor nodeCursor,
+            RelationshipEndpointConstraintDescriptor descriptor,
+            TokenNameLookup tokenNameLookup)
+            throws CreateConstraintFailureException {
+        // TODO: Implement
+    }
+
+    @Override
+    public void validateLabelCoexistenceConstraint(
+            NodeLabelIndexCursor allNodes,
+            NodeCursor nodeCursor,
+            LabelCoexistenceConstraintDescriptor descriptor,
+            TokenNameLookup tokenNameLookup)
+            throws CreateConstraintFailureException {
+        // TODO: Implement
+    }
+
+    @Override
+    public void validateLabelCoexistenceConstraint(
+            NodeCursor nodeCursor, LabelCoexistenceConstraintDescriptor descriptor, TokenNameLookup tokenNameLookup)
+            throws CreateConstraintFailureException {
+        // TODO: Implement
     }
 }

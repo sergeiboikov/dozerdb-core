@@ -61,7 +61,7 @@ public class ConstraintDelegator extends TxStateVisitor.Delegator {
             Read read) {
         super(next);
         this.constraintChecker = constraintChecker;
-        this.nodeCursor = cursorFactory.allocateFullAccessNodeCursor(cursorContext);
+        this.nodeCursor = cursorFactory.allocateFullAccessNodeCursor(cursorContext, memoryTracker);
         this.propertyCursor = cursorFactory.allocateFullAccessPropertyCursor(cursorContext, memoryTracker);
         this.read = read;
         this.relationshipScanCursor = cursorFactory.allocateRelationshipScanCursor(cursorContext);

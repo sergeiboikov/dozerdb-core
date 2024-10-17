@@ -35,6 +35,7 @@ import org.neo4j.cypher.internal.AdministrationCommandRuntime.getNameFields
 import org.neo4j.cypher.internal.AdministrationCommandRuntime.internalKey
 import org.neo4j.cypher.internal.AdministrationCommandRuntime.makeRenameExecutionPlan
 import org.neo4j.cypher.internal.AdministrationCommandRuntime.runtimeStringValue
+import org.neo4j.cypher.internal.AdministrationCommandRuntime.userNamePropKey
 import org.neo4j.cypher.internal.administration.DoNothingExecutionPlanner
 import org.neo4j.cypher.internal.administration.DozerDbAlterUserExecutionPlanner
 import org.neo4j.cypher.internal.administration.DozerDbCreateUserExecutionPlanner
@@ -107,6 +108,7 @@ import org.neo4j.kernel.api.exceptions.Status
 import org.neo4j.kernel.api.exceptions.Status.HasStatus
 import org.neo4j.kernel.database.NormalizedDatabaseName
 import org.neo4j.kernel.impl.api.security.RestrictedAccessMode
+import org.neo4j.kernel.impl.query.TransactionalContext.DatabaseMode
 import org.neo4j.server.security.systemgraph.UserSecurityGraphComponent
 import org.neo4j.values.storable.BooleanValue
 import org.neo4j.values.storable.LongValue
@@ -149,7 +151,11 @@ case class DozerDbAdministrationCommandRuntime(
     )
   }
 
-  override def compileToExecutable(state: LogicalQuery, context: RuntimeContext): ExecutionPlan = {
+  override def compileToExecutable(
+    state: LogicalQuery,
+    context: RuntimeContext,
+    databaseMode: DatabaseMode
+  ): ExecutionPlan = {
     // Either the logical plan is a command that the partial function logicalToExecutable provides/understands OR we throw an error
     logicalToExecutable.applyOrElse(state.logicalPlan, throwCantCompile).apply(
       AdministrationCommandRuntimeContext(context)
@@ -310,7 +316,8 @@ case class DozerDbAdministrationCommandRuntime(
         val sourcePlan: Option[ExecutionPlan] =
           Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
         makeRenameExecutionPlan(
-          "User",
+          PrivilegeGQLCodeEntity.User(),
+          userNamePropKey,
           fromUserName,
           toUserName,
           params => {
@@ -505,11 +512,11 @@ case class DozerDbAdministrationCommandRuntime(
         )
           .planShowDatabases(scope, verbose, symbols.map(_.name), yields, returns)
 
-    case DoNothingIfNotExists(source, label, name, operation, valueMapper) => context =>
+    case DoNothingIfNotExists(source, entity, name, operation, valueMapper) => context =>
         val sourcePlan: Option[ExecutionPlan] =
           Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
         DoNothingExecutionPlanner(normalExecutionEngine, securityAuthorizationHandler).planDoNothingIfNotExists(
-          label,
+          entity,
           name,
           valueMapper,
           operation,
@@ -546,11 +553,11 @@ case class DozerDbAdministrationCommandRuntime(
         )
 
     // Ensure that the role or user exists before being dropped
-    case EnsureNodeExists(source, label, name, valueMapper, extraFilter, labelDescription, action) => context =>
+    case EnsureNodeExists(source, entity, name, valueMapper, extraFilter, labelDescription, action) => context =>
         val sourcePlan: Option[ExecutionPlan] =
           Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
         EnsureNodeExistsExecutionPlanner(normalExecutionEngine, securityAuthorizationHandler)
-          .planEnsureNodeExists(label, name, valueMapper, extraFilter, labelDescription, action, sourcePlan)
+          .planEnsureNodeExists(entity, name, valueMapper, extraFilter, labelDescription, action, sourcePlan)
 
     // SUPPORT PROCEDURES (need to be cleared before here)
     case SystemProcedureCall(_, call, returns, _, checkCredentialsExpired) => _ =>
