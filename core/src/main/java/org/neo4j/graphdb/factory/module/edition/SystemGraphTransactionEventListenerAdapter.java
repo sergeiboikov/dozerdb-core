@@ -19,7 +19,9 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import org.neo4j.configuration.Config;
 import org.neo4j.dbms.database.MultiDatabaseManager;
+import org.neo4j.dbms.systemgraph.TopologyGraphDbmsModel;
 import org.neo4j.graphdb.GraphDatabaseService;
+import org.neo4j.graphdb.Transaction;
 import org.neo4j.graphdb.event.TransactionData;
 import org.neo4j.graphdb.event.TransactionEventListenerAdapter;
 import org.neo4j.graphdb.factory.module.GlobalModule;
@@ -76,22 +78,65 @@ public class SystemGraphTransactionEventListenerAdapter extends TransactionEvent
     } // End
 
     @Override
+    public Object beforeCommit(TransactionData txData, Transaction transaction, GraphDatabaseService databaseService)
+            throws Exception {
+
+        AtomicReference<String> name = new AtomicReference<>();
+        AtomicReference<Boolean> deleteAction = new AtomicReference<>(false);
+
+        // Loop through the created nodes in the transaction
+        txData.createdNodes().forEach(node -> {
+
+            // Check if the node has the label DELETED_DATABASE_LABEL
+            if (node.hasLabel(TopologyGraphDbmsModel.DELETED_DATABASE_LABEL)) {
+
+                deleteAction.set(true); // Set delete action flag
+                if (node.hasProperty("name")) {
+                    name.set(node.getProperty("name").toString());
+                }
+            }
+        });
+
+        boolean shouldProcess = (name.get() != null && !gdbsToIgnore.contains(name.get()) && deleteAction.get());
+
+        // Ignore if no relevant node found or if the transaction is for the system or default graph database.
+        if (shouldProcess) {
+
+            // Retrieve NamedDatabaseId for the database name
+            NamedDatabaseId nId = getNamedDatabaseIdForName(name.get());
+
+            if (nId != null) {
+
+                // Drop the database if it's marked for deletion
+
+                log.info(" Dropping database: " + name.get());
+                databaseManager.dropDatabase(nId);
+
+            } else {
+                log.warn(" Database " + name.get() + " was not found.");
+            }
+        }
+
+        return super.beforeCommit(txData, transaction, databaseService);
+    }
+
+    @Override
     public void afterCommit(TransactionData txData, Object state, GraphDatabaseService systemDatabase) {
 
         AtomicReference<String> newStatus = new AtomicReference<>();
         AtomicReference<String> oldStatus = new AtomicReference<>();
         AtomicReference<String> name = new AtomicReference<>();
-        txData.assignedNodeProperties().forEach(pen -> {
-            if (pen.key().equals("status")) {
+        txData.assignedNodeProperties().forEach(nodePropertyEntry -> {
+            if (nodePropertyEntry.key().equals("status")) {
 
-                newStatus.set(pen.value().toString());
-                if (pen.previouslyCommittedValue() != null) {
-                    oldStatus.set(pen.previouslyCommittedValue().toString());
+                newStatus.set(nodePropertyEntry.value().toString());
+                if (nodePropertyEntry.previouslyCommittedValue() != null) {
+                    oldStatus.set(nodePropertyEntry.previouslyCommittedValue().toString());
                 }
             } // End if.
 
-            if (pen.key().equals("name")) {
-                name.set(pen.value().toString());
+            if (nodePropertyEntry.key().equals("name")) {
+                name.set(nodePropertyEntry.value().toString());
             }
         });
 
@@ -106,9 +151,11 @@ public class SystemGraphTransactionEventListenerAdapter extends TransactionEvent
 
             if (nId != null) {
 
-                databaseManager.createDatabase(nId);
-                databaseManager.startDatabase(nId);
-                log.info(" Database " + name.get() + " was started.");
+                if (shouldCreateDatabase(txData, name.get())) {
+                    log.info(" Created and Started Database : " + name.get());
+                    databaseManager.createDatabase(nId);
+                    databaseManager.startDatabase(nId);
+                }
 
             } else {
                 log.warn(" Database " + name.get() + " was not found.");
@@ -117,5 +164,10 @@ public class SystemGraphTransactionEventListenerAdapter extends TransactionEvent
 
         // We should only have one node for the commits we are watching.
 
+    }
+
+    // We want to implement better checks here in the future. For now, we
+    private boolean shouldCreateDatabase(TransactionData txData, String name) {
+        return true;
     }
 }

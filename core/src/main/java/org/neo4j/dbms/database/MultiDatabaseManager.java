@@ -14,14 +14,26 @@ import static java.util.Objects.requireNonNull;
 import static org.neo4j.dbms.systemgraph.TopologyGraphDbmsModel.DATABASE_LABEL;
 import static org.neo4j.kernel.database.NamedDatabaseId.NAMED_SYSTEM_DATABASE_ID;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.neo4j.configuration.Config;
 import org.neo4j.configuration.DozerDbSettings;
+import org.neo4j.configuration.GraphDatabaseSettings;
 import org.neo4j.dbms.api.DatabaseExistsException;
 import org.neo4j.dbms.api.DatabaseManagementException;
+import org.neo4j.gqlstatus.ErrorClassification;
+import org.neo4j.gqlstatus.ErrorGqlStatusObjectImplementation;
+import org.neo4j.gqlstatus.GqlMessageParams;
+import org.neo4j.gqlstatus.GqlStatusInfoCodes;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.factory.module.GlobalModule;
 import org.neo4j.kernel.database.Database;
@@ -96,8 +108,96 @@ public final class MultiDatabaseManager {
         return databaseContext;
     }
 
-    public void dropDatabase(NamedDatabaseId ignore) {
-        // TODO: Implement
+    public void dropDatabase(NamedDatabaseId namedDatabaseId) {
+        // Ensure the database exists
+        Optional<StandaloneDatabaseContext> contextOptional = databaseRepository.getDatabaseContext(namedDatabaseId);
+
+        if (contextOptional.isEmpty()) {
+            log.warn("Database '%s' does not exist and cannot be dropped.", namedDatabaseId.name());
+            return;
+        }
+
+        StandaloneDatabaseContext context = contextOptional.get();
+
+        // Stop the database before dropping it
+        try {
+            log.info("Stopping database '%s' before dropping.", namedDatabaseId.name());
+            context.database().stop();
+        } catch (Exception e) {
+            log.error(
+                    "Failed to stop database '%s' before dropping. Error: %s", namedDatabaseId.name(), e.getMessage());
+            throw new DatabaseManagementException("Failed to stop the database before dropping.", e);
+        }
+
+        // Drop the database from the system
+        try {
+            log.info("Dropping database '%s'.", namedDatabaseId.name());
+            databaseRepository.remove(namedDatabaseId); // Remove it from repository
+            context.database().prepareToDrop();
+
+            // TODO: In the future we can backup the specific database before dropping it.
+            // backupBeforeDelete(namedDatabaseId.name());
+
+            context.database().drop();
+
+            log.info("Dropped database '%s' successfully.", namedDatabaseId.name());
+
+        } catch (Exception e) {
+            log.error("Failed to drop database '%s'. Error: %s", namedDatabaseId.name(), e.getMessage());
+            throw new DatabaseManagementException("Failed to drop the database.", e);
+        }
+    }
+
+    /**
+     * Copies database before dropping it.
+     * @param dbName
+     * @throws IOException
+     */
+    private void backupBeforeDelete(String dbName) throws IOException {
+        // Get the Neo4j data directory from the configuration
+        String dataDirectory = config.get(GraphDatabaseSettings.data_directory).toString();
+
+        // Get current timestamp
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
+
+        // Paths for the current and deleted database directories with timestamp
+        Path dbSourcePath = Paths.get(dataDirectory, "databases", dbName);
+        Path txSourcePath = Paths.get(dataDirectory, "transactions", dbName);
+
+        Path dbDeletedPath = Paths.get(dataDirectory, "deleted", "databases", dbName + "-" + timestamp);
+        Path txDeletedPath = Paths.get(dataDirectory, "deleted", "transactions", dbName + "-" + timestamp);
+
+        // Ensure the deleted directories exist or create them
+        try {
+            Files.createDirectories(dbDeletedPath.getParent());
+            Files.createDirectories(txDeletedPath.getParent());
+
+            // Move the database folder with timestamp
+            if (Files.exists(dbSourcePath)) {
+
+                log.info("Moving database directory: %s to %s", dbSourcePath.toString(), dbDeletedPath.toString());
+                Files.copy(dbSourcePath, dbDeletedPath, StandardCopyOption.REPLACE_EXISTING);
+            } else {
+
+                log.warn("Database directory does not exist: %s", dbSourcePath.toString());
+            }
+
+            // Move the transaction folder with timestamp
+            if (Files.exists(txSourcePath)) {
+                log.info("Moving transaction directory: %s to %s", txSourcePath.toString(), txDeletedPath.toString());
+                Files.copy(txSourcePath, txDeletedPath, StandardCopyOption.REPLACE_EXISTING);
+            } else {
+                log.warn("Transaction directory does not exist: %s", txSourcePath.toString());
+            }
+
+            log.info(
+                    "Database and transaction directories for '%s' moved to deleted with timestamp successfully.",
+                    dbName);
+
+        } catch (IOException e) {
+            log.error("Failed to move database directories for '%s'. Error: %s", dbName, e.getMessage());
+            throw e;
+        }
     }
 
     public void startDatabase(NamedDatabaseId namedDatabaseId) {
@@ -118,9 +218,12 @@ public final class MultiDatabaseManager {
             database.start();
         } catch (Throwable t) {
 
-            log.error("Failed to start " + namedDatabaseId, t);
+            var gql = ErrorGqlStatusObjectImplementation.from(GqlStatusInfoCodes.STATUS_51N40)
+                    .withParam(GqlMessageParams.namedDatabaseId, namedDatabaseId.name())
+                    .withClassification(ErrorClassification.DATABASE_ERROR)
+                    .build();
             context.fail(new UnableToStartDatabaseException(
-                    format("An error occurred! Unable to start `%s`.", namedDatabaseId), t));
+                    gql, format("An error occurred! Unable to start `%s`.", namedDatabaseId), t));
         }
     }
 
