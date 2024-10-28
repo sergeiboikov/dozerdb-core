@@ -40,24 +40,7 @@ import org.neo4j.dbms.CommunityDatabaseStateService;
 import org.neo4j.dbms.CommunityKernelPanicListener;
 import org.neo4j.dbms.DatabaseStateService;
 import org.neo4j.dbms.api.DatabaseManagementService;
-import org.neo4j.dbms.database.DatabaseContext;
-import org.neo4j.dbms.database.DatabaseContextProvider;
-import org.neo4j.dbms.database.DatabaseOperationCounts;
-import org.neo4j.dbms.database.DatabaseReferenceCacheClearingListener;
-import org.neo4j.dbms.database.DatabaseRepository;
-import org.neo4j.dbms.database.DatabaseStateMonitor;
-import org.neo4j.dbms.database.DefaultDatabaseContextFactoryComponents;
-import org.neo4j.dbms.database.DefaultDatabaseDetailsExtrasProvider;
-import org.neo4j.dbms.database.DefaultSystemGraphComponent;
-import org.neo4j.dbms.database.DefaultSystemGraphInitializer;
-import org.neo4j.dbms.database.DefaultTopologyInfoService;
-import org.neo4j.dbms.database.DozerDbDatabaseContextFactory;
-import org.neo4j.dbms.database.MultiDatabaseLifecycleService;
-import org.neo4j.dbms.database.MultiDatabaseManager;
-import org.neo4j.dbms.database.StandaloneDatabaseContext;
-import org.neo4j.dbms.database.SystemGraphComponents;
-import org.neo4j.dbms.database.SystemGraphInitializer;
-import org.neo4j.dbms.database.TopologyInfoService;
+import org.neo4j.dbms.database.*;
 import org.neo4j.dbms.database.readonly.ReadOnlyChangeListener;
 import org.neo4j.dbms.database.readonly.ReadOnlyDatabases;
 import org.neo4j.dbms.database.readonly.SystemGraphReadOnlyDatabaseLookupFactory;
@@ -65,13 +48,7 @@ import org.neo4j.dbms.database.readonly.SystemGraphReadOnlyListener;
 import org.neo4j.dbms.identity.DefaultIdentityModule;
 import org.neo4j.dbms.identity.ServerIdentity;
 import org.neo4j.dbms.identity.ServerIdentityFactory;
-import org.neo4j.dbms.routing.ClientRoutingDomainChecker;
-import org.neo4j.dbms.routing.DefaultDatabaseAvailabilityChecker;
-import org.neo4j.dbms.routing.DefaultRoutingService;
-import org.neo4j.dbms.routing.LocalRoutingTableServiceValidator;
-import org.neo4j.dbms.routing.RoutingOption;
-import org.neo4j.dbms.routing.RoutingService;
-import org.neo4j.dbms.routing.SingleAddressRoutingTableProvider;
+import org.neo4j.dbms.routing.*;
 import org.neo4j.dbms.systemgraph.CommunityTopologyGraphComponent;
 import org.neo4j.dbms.systemgraph.SystemDatabaseProvider;
 import org.neo4j.graphdb.factory.module.GlobalModule;
@@ -80,13 +57,7 @@ import org.neo4j.io.device.DeviceMapper;
 import org.neo4j.kernel.api.security.SecurityModule;
 import org.neo4j.kernel.api.security.provider.NoAuthSecurityProvider;
 import org.neo4j.kernel.api.security.provider.SecurityProvider;
-import org.neo4j.kernel.database.DatabaseId;
-import org.neo4j.kernel.database.DatabaseIdRepository;
-import org.neo4j.kernel.database.DatabaseReferenceRepository;
-import org.neo4j.kernel.database.MapCachingDatabaseIdRepository;
-import org.neo4j.kernel.database.MapCachingDatabaseReferenceRepository;
-import org.neo4j.kernel.database.SystemGraphDatabaseIdRepository;
-import org.neo4j.kernel.database.SystemGraphDatabaseReferenceRepository;
+import org.neo4j.kernel.database.*;
 import org.neo4j.kernel.impl.api.TransactionalProcessFactory;
 import org.neo4j.kernel.impl.factory.DbmsInfo;
 import org.neo4j.kernel.impl.factory.DefaultTransactionalProcessFactory;
@@ -248,24 +219,6 @@ public class DozerDbEditionModule extends AbstractEditionModule implements Defau
                         new SystemGraphTransactionEventListenerAdapter(multiDatabaseManager, globalModule));
     }
 
-    /*
-    private static ReadOnlyDatabases createGlobalReadOnlyChecker(
-            DatabaseContextProvider<?> databaseContextProvider,
-            Config globalConfig,
-            GlobalTransactionEventListeners txListeners,
-            LifeSupport globalLife,
-            InternalLogProvider logProvider) {
-        var systemGraphReadOnlyLookup =
-                new SystemGraphReadOnlyDatabaseLookupFactory(databaseContextProvider, logProvider);
-        var configReadOnlyLookup =
-                new ConfigBasedLookupFactory(globalConfig, databaseContextProvider.databaseIdRepository());
-        var globalChecker = new DefaultReadOnlyDatabases(systemGraphReadOnlyLookup, configReadOnlyLookup);
-        var configListener = new ConfigReadOnlyDatabaseListener(globalChecker, globalConfig);
-        var systemGraphListener = new SystemGraphReadOnlyListener(txListeners, globalChecker);
-        globalLife.add(configListener);
-        globalLife.add(systemGraphListener);
-        return globalChecker;
-    }*/
     @Override
     public void createGlobalReadOnlyChecker(
             SystemDatabaseProvider systemDatabaseProvider,

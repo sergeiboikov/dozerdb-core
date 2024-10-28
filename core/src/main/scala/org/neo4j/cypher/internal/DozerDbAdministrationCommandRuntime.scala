@@ -38,6 +38,7 @@ import org.neo4j.cypher.internal.AdministrationCommandRuntime.internalKey
 import org.neo4j.cypher.internal.AdministrationCommandRuntime.makeRenameExecutionPlan
 import org.neo4j.cypher.internal.AdministrationCommandRuntime.runtimeStringValue
 import org.neo4j.cypher.internal.AdministrationCommandRuntime.userNamePropKey
+import org.neo4j.cypher.internal.DatabaseStatus
 import org.neo4j.cypher.internal.administration.DoNothingExecutionPlanner
 import org.neo4j.cypher.internal.administration.DozerDbAlterUserExecutionPlanner
 import org.neo4j.cypher.internal.administration.DozerDbCreateUserExecutionPlanner
@@ -87,6 +88,8 @@ import org.neo4j.cypher.internal.logical.plans.SetOwnPassword
 import org.neo4j.cypher.internal.logical.plans.ShowCurrentUser
 import org.neo4j.cypher.internal.logical.plans.ShowDatabase
 import org.neo4j.cypher.internal.logical.plans.ShowUsers
+import org.neo4j.cypher.internal.logical.plans.StartDatabase
+import org.neo4j.cypher.internal.logical.plans.StopDatabase
 import org.neo4j.cypher.internal.logical.plans.SystemProcedureCall
 import org.neo4j.cypher.internal.procs.ActionMapper
 import org.neo4j.cypher.internal.procs.AuthorizationAndPredicateExecutionPlan
@@ -99,6 +102,7 @@ import org.neo4j.cypher.internal.procs.ThrowException
 import org.neo4j.cypher.internal.procs.UpdatingSystemCommandExecutionPlan
 import org.neo4j.cypher.rendering.QueryRenderer
 import org.neo4j.dbms.api.DatabaseLimitReachedException
+import org.neo4j.dbms.systemgraph.TopologyGraphDbmsModel
 import org.neo4j.exceptions.CantCompileQueryException
 import org.neo4j.exceptions.CypherExecutionException
 import org.neo4j.exceptions.DatabaseAdministrationOnFollowerException
@@ -369,6 +373,82 @@ case class DozerDbAdministrationCommandRuntime(
           currentPassword,
           sourcePlan
         )
+
+    case StopDatabase(source: AdministrationCommandLogicalPlan, databaseName: DatabaseName) => (context) => {
+
+        val nameFields: DatabaseNameFields = getDatabaseNameFields(
+          "databaseName",
+          databaseName
+        )
+        val nameValue: Value = nameFields.nameValue
+        // TopologyGraphDbmsModel.DATABASE_NAME
+        // Cypher query to drop the database node from the system graph
+        UpdatingSystemCommandExecutionPlan(
+          "" +
+            "StopDatabase",
+          normalExecutionEngine,
+          securityAuthorizationHandler,
+          s"""
+             | MATCH (database:Database {name: $$name})
+             | SET database.status = '${DatabaseStatus.Offline.stringValue()}',
+             |     database.stopped_at = datetime(),
+             |     database.started_at = null,
+             |     database.updated_at = datetime()
+             | RETURN database.name as name, database.currentStatus as status
+    """.stripMargin,
+          VirtualValues.map(
+            Array("name"),
+            Array(nameValue)
+          ),
+          QueryHandler
+            .handleError {
+              case (error, _) =>
+                new IllegalStateException(
+                  s"Could not STOP the database called ${nameValue}.",
+                  error
+                )
+            },
+          Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
+        )
+      }
+
+    case StartDatabase(source: AdministrationCommandLogicalPlan, databaseName: DatabaseName) => (context) => {
+
+        val nameFields: DatabaseNameFields = getDatabaseNameFields(
+          "databaseName",
+          databaseName
+        )
+        val nameValue: Value = nameFields.nameValue
+        // TopologyGraphDbmsModel.DATABASE_NAME
+        // Cypher query to drop the database node from the system graph
+        UpdatingSystemCommandExecutionPlan(
+          "" +
+            "StartDatabase",
+          normalExecutionEngine,
+          securityAuthorizationHandler,
+          s"""
+             | MATCH (database:Database {name: $$name})
+             | SET database.status = '${DatabaseStatus.Online.stringValue()}',
+             |     database.stopped_at = null,
+             |     database.started_at = datetime(),
+             |     database.updated_at = datetime()
+             | RETURN database.name as name, database.currentStatus as status
+    """.stripMargin,
+          VirtualValues.map(
+            Array("name"),
+            Array(nameValue)
+          ),
+          QueryHandler
+            .handleError {
+              case (error, _) =>
+                new IllegalStateException(
+                  s"Could not START the database called ${nameValue}.",
+                  error
+                )
+            },
+          Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
+        )
+      }
 
     case DropDatabase(source, databaseName, additionalAction, forceComposite, aliasAction) => (context) =>
         {
@@ -787,13 +867,6 @@ case class DozerDbAdministrationCommandRuntime(
     }
     logicalToExecutable.isDefinedAt(logicalPlan)
   }
-}
-
-object DatabaseStatus extends Enumeration {
-  type Status = TextValue
-
-  val Online: TextValue = Values.utf8Value("online")
-  val Offline: TextValue = Values.utf8Value("offline")
 }
 
 object DozerDbAdministrationCommandRuntime {

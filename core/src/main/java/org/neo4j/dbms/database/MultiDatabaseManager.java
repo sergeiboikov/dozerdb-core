@@ -21,15 +21,16 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 import org.neo4j.configuration.Config;
 import org.neo4j.configuration.DozerDbSettings;
 import org.neo4j.configuration.GraphDatabaseSettings;
 import org.neo4j.dbms.api.DatabaseExistsException;
 import org.neo4j.dbms.api.DatabaseManagementException;
+import org.neo4j.dbms.systemgraph.TopologyGraphDbmsModel;
 import org.neo4j.gqlstatus.ErrorClassification;
 import org.neo4j.gqlstatus.ErrorGqlStatusObjectImplementation;
 import org.neo4j.gqlstatus.GqlMessageParams;
@@ -122,7 +123,8 @@ public final class MultiDatabaseManager {
         // Stop the database before dropping it
         try {
             log.info("Stopping database '%s' before dropping.", namedDatabaseId.name());
-            context.database().stop();
+            // context.database().stop();
+            this.stopDatabase(context);
         } catch (Exception e) {
             log.error(
                     "Failed to stop database '%s' before dropping. Error: %s", namedDatabaseId.name(), e.getMessage());
@@ -201,13 +203,16 @@ public final class MultiDatabaseManager {
     }
 
     public void startDatabase(NamedDatabaseId namedDatabaseId) {
-        // TODO: Check is isStarted is true.
-        this.databaseRepository
-                .getDatabaseContext(namedDatabaseId)
-                .get()
-                .database()
-                .start();
-        this.counter.increaseStartCount();
+        try {
+
+            Optional<StandaloneDatabaseContext> contextOptional =
+                    databaseRepository.getDatabaseContext(namedDatabaseId);
+
+            this.startDatabase(contextOptional.get());
+
+        } catch (Throwable t) {
+            log.error("Failed to start " + namedDatabaseId, t);
+        }
     }
 
     public void startDatabase(StandaloneDatabaseContext context) {
@@ -216,6 +221,7 @@ public final class MultiDatabaseManager {
             log.info("Starting '%s'.", namedDatabaseId);
             Database database = context.database();
             database.start();
+            this.counter.increaseStartCount();
         } catch (Throwable t) {
 
             var gql = ErrorGqlStatusObjectImplementation.from(GqlStatusInfoCodes.STATUS_51N40)
@@ -238,6 +244,7 @@ public final class MultiDatabaseManager {
 
             database.stop();
             log.info("Stopped '%s' successfully.", namedDatabaseId);
+            this.counter.increaseStopCount();
         } catch (Throwable t) {
             log.error("Failed to stop " + namedDatabaseId, t);
             context.fail(new DatabaseManagementException(
@@ -245,13 +252,17 @@ public final class MultiDatabaseManager {
         }
     }
 
-    public void stopDatabase(NamedDatabaseId namedDatabaseId, StandaloneDatabaseContext context) {
-        try {
-            context.database().stop();
-        } catch (Throwable t) {
-            log.error("Failed to stop " + namedDatabaseId, t);
-            context.fail(t);
+    public void stopDatabase(NamedDatabaseId namedDatabaseId) {
+        Optional<StandaloneDatabaseContext> contextOptional = databaseRepository.getDatabaseContext(namedDatabaseId);
+
+        if (contextOptional.isEmpty()) {
+            log.warn("Database '%s' does not exist and cannot be stopped.", namedDatabaseId.name());
+            return;
         }
+
+        StandaloneDatabaseContext context = contextOptional.get();
+
+        this.stopDatabase(context);
     }
 
     // TODO: We can also remove this check completely if needed.
@@ -298,20 +309,47 @@ public final class MultiDatabaseManager {
      *         system, or null if an exception occurred.
      */
     public Set<NamedDatabaseId> listAllNamedDatabaseIds() {
-        Set<NamedDatabaseId> namedDatabaseIds = null; // Initialize to an empty set
+        return listAllNamedDatabaseIds(null);
+    }
+
+    public Set<NamedDatabaseId> listAllNamedDatabaseIds(TopologyGraphDbmsModel.DatabaseStatus databaseStatus) {
+        Set<NamedDatabaseId> namedDatabaseIds = new HashSet<>();
 
         try (var transaction = this.databaseRepository
-                        .getDatabaseContext(NAMED_SYSTEM_DATABASE_ID)
-                        .orElseThrow()
-                        .databaseFacade()
-                        .beginTx();
-                var nodeStream = transaction.findNodes(DATABASE_LABEL).stream()) {
+                .getDatabaseContext(NAMED_SYSTEM_DATABASE_ID)
+                .orElseThrow()
+                .databaseFacade()
+                .beginTx()) {
 
-            namedDatabaseIds = nodeStream.map(this::namedDatabaseIdFromNode).collect(Collectors.toSet());
+            // Retrieve all nodes with the DATABASE_LABEL
+            var nodeStream = transaction.findNodes(DATABASE_LABEL).stream();
+
+            // Process each node and retrieve the status directly from node properties
+            nodeStream.forEach(node -> {
+                NamedDatabaseId dbId = namedDatabaseIdFromNode(node);
+
+                // Assuming status is stored as a property on the node, adjust the property key as needed
+                String nodeStatus =
+                        (String) node.getProperty("status", "UNKNOWN"); // Default to "UNKNOWN" if status is absent
+
+                log.info("Database Name: " + dbId.name() + ", Status: " + nodeStatus);
+
+                // Check if the status matches the specified `databaseStatus`, or add all if null
+                if (databaseStatus == null || databaseStatus.statusName().equals(nodeStatus)) {
+                    namedDatabaseIds.add(dbId);
+                }
+            });
+
         } catch (Exception e) {
-            log.error("An error occurred trying to list all the gdbs. Error:", e);
+            log.error("An error occurred trying to list all the databases. Error:", e);
         }
 
+        log.info("Returning Named Database IDs: " + namedDatabaseIds);
         return namedDatabaseIds;
+    }
+
+    private TopologyGraphDbmsModel.DatabaseStatus getDatabaseStatus(Node node) {
+        String status = (String) node.getProperty("status", null);
+        return status != null ? TopologyGraphDbmsModel.DatabaseStatus.valueOf(status) : null;
     }
 }
