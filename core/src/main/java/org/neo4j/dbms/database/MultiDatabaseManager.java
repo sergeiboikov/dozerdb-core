@@ -265,11 +265,11 @@ public final class MultiDatabaseManager {
         this.stopDatabase(context);
     }
 
-    // TODO: We can also remove this check completely if needed.
+
     private void checkDatabaseLimit(NamedDatabaseId namedDatabaseId) {
 
-        Integer maxDatabases = config.get(DozerDbSettings.max_databases); // Default to 100 if not
-
+        // Default to 100 if the max databases is not set in the configuration.
+        Integer maxDatabases = Optional.ofNullable(config.get(DozerDbSettings.max_databases)).orElse(100);
         if (databaseRepository.registeredDatabases().size() >= maxDatabases) {
             throw new DatabaseManagementException("Could not create gdb: " + namedDatabaseId.name()
                     + " because you have exceeded the limit of " + maxDatabases + ".");
