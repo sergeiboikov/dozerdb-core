@@ -18,6 +18,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.neo4j.dbms.api.DatabaseManagementException;
 import org.neo4j.dbms.api.DatabaseNotFoundException;
+import org.neo4j.dbms.systemgraph.TopologyGraphDbmsModel;
 import org.neo4j.graphdb.Node;
 import org.neo4j.kernel.database.DatabaseIdFactory;
 import org.neo4j.kernel.database.NamedDatabaseId;
@@ -113,16 +114,44 @@ public final class MultiDatabaseLifecycleService {
 
         try {
 
-            multiDatabaseManager.listAllNamedDatabaseIds().forEach(namedDatabaseId -> {
+            try {
+                // We only want to start databases which are online.  TopologyGraphDbmsModel.DatabaseStatus.ONLINE
+                multiDatabaseManager
+                        .listAllNamedDatabaseIds(TopologyGraphDbmsModel.DatabaseStatus.ONLINE)
+                        .forEach(namedDatabaseId -> {
+                            // Create the database and add to the database repository.
 
-                // Create the database and add to the database repository.
-                if (!namedDatabaseId.isSystemDatabase()
-                        && !namedDatabaseId.name().equals(defaultGdbName)) {
+                            if (!namedDatabaseId.isSystemDatabase()
+                                    && !namedDatabaseId.name().equals(defaultGdbName)) {
 
-                    var context = multiDatabaseManager.createDatabase(namedDatabaseId);
-                    multiDatabaseManager.startDatabase(context);
-                }
-            });
+                                var context = multiDatabaseManager.createDatabase(namedDatabaseId);
+
+                                multiDatabaseManager.startDatabase(context);
+                            }
+                        });
+            } catch (Exception e) {
+                log.error(" An error occurred trying to start databases.", e);
+            }
+
+            try {
+                // We only want to start databases which are online.  TopologyGraphDbmsModel.DatabaseStatus.ONLINE
+                multiDatabaseManager
+                        .listAllNamedDatabaseIds(TopologyGraphDbmsModel.DatabaseStatus.OFFLINE)
+                        .forEach(namedDatabaseId -> {
+                            // Create the database and add to the database repository.
+
+                            if (!namedDatabaseId.isSystemDatabase()
+                                    && !namedDatabaseId.name().equals(defaultGdbName)) {
+
+                                var context = multiDatabaseManager.createDatabase(namedDatabaseId);
+
+                                // multiDatabaseManager.startDatabase(context);
+
+                            }
+                        });
+            } catch (Exception e) {
+                log.error(" An error occurred trying to start databases.", e);
+            }
 
         } catch (Exception e) {
 
@@ -153,18 +182,17 @@ public final class MultiDatabaseLifecycleService {
             multiDatabaseManager.stopDatabase(systemContext);
 
             /**
-             * TODO:  The system database should be the last one stopped according to the test LifeCycles Test.
+             * The system database should be the last one stopped according to the test LifeCycles Test.
              */
             databaseRepository.registeredDatabases().forEach((namedDatabaseId, databaseContext) -> {
                 // We do not stop the system database as that is stopped manually through another lifecycle
 
                 if (!namedDatabaseId.isSystemDatabase()) {
 
-                    multiDatabaseManager.stopDatabase(namedDatabaseId, databaseContext);
+                    multiDatabaseManager.stopDatabase(databaseContext);
                 }
             });
 
-            // TODO: Shutdown the rest of the databases and pass them to the execute all as well...
             executeAll(
                     () -> standaloneDatabaseContext.ifPresent(this::throwIfUnableToStop),
                     () -> throwIfUnableToStop(systemContext));

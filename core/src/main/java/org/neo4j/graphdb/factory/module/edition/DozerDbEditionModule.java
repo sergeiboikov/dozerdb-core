@@ -30,73 +30,39 @@ import static org.neo4j.configuration.GraphDatabaseSettings.initial_default_data
 import static org.neo4j.dbms.database.DatabaseContextProviderDelegate.delegate;
 import static org.neo4j.dbms.routing.RoutingTableTTLProvider.ttlFromConfig;
 
+import java.util.Set;
 import org.neo4j.bolt.dbapi.BoltGraphDatabaseManagementServiceSPI;
 import org.neo4j.bolt.tx.TransactionManager;
 import org.neo4j.collection.Dependencies;
 import org.neo4j.configuration.Config;
-import org.neo4j.configuration.GraphDatabaseInternalSettings;
 import org.neo4j.configuration.GraphDatabaseSettings;
-import org.neo4j.configuration.database.readonly.ConfigBasedLookupFactory;
-import org.neo4j.configuration.database.readonly.ConfigReadOnlyDatabaseListener;
 import org.neo4j.dbms.CommunityDatabaseStateService;
 import org.neo4j.dbms.CommunityKernelPanicListener;
 import org.neo4j.dbms.DatabaseStateService;
 import org.neo4j.dbms.api.DatabaseManagementService;
-import org.neo4j.dbms.database.DatabaseContext;
-import org.neo4j.dbms.database.DatabaseContextProvider;
-import org.neo4j.dbms.database.DatabaseOperationCounts;
-import org.neo4j.dbms.database.DatabaseReferenceCacheClearingListener;
-import org.neo4j.dbms.database.DatabaseRepository;
-import org.neo4j.dbms.database.DatabaseStateMonitor;
-import org.neo4j.dbms.database.DefaultDatabaseContextFactoryComponents;
-import org.neo4j.dbms.database.DefaultDatabaseDetailsExtrasProvider;
-import org.neo4j.dbms.database.DefaultSystemGraphComponent;
-import org.neo4j.dbms.database.DefaultSystemGraphInitializer;
-import org.neo4j.dbms.database.DefaultTopologyInfoService;
-import org.neo4j.dbms.database.DozerDbDatabaseContextFactory;
-import org.neo4j.dbms.database.MultiDatabaseLifecycleService;
-import org.neo4j.dbms.database.MultiDatabaseManager;
-import org.neo4j.dbms.database.StandaloneDatabaseContext;
-import org.neo4j.dbms.database.SystemGraphComponents;
-import org.neo4j.dbms.database.SystemGraphInitializer;
-import org.neo4j.dbms.database.TopologyInfoService;
-import org.neo4j.dbms.database.readonly.DefaultReadOnlyDatabases;
+import org.neo4j.dbms.database.*;
+import org.neo4j.dbms.database.readonly.ReadOnlyChangeListener;
 import org.neo4j.dbms.database.readonly.ReadOnlyDatabases;
 import org.neo4j.dbms.database.readonly.SystemGraphReadOnlyDatabaseLookupFactory;
 import org.neo4j.dbms.database.readonly.SystemGraphReadOnlyListener;
 import org.neo4j.dbms.identity.DefaultIdentityModule;
 import org.neo4j.dbms.identity.ServerIdentity;
 import org.neo4j.dbms.identity.ServerIdentityFactory;
-import org.neo4j.dbms.routing.ClientRoutingDomainChecker;
-import org.neo4j.dbms.routing.DefaultDatabaseAvailabilityChecker;
-import org.neo4j.dbms.routing.DefaultRoutingService;
-import org.neo4j.dbms.routing.LocalRoutingTableServiceValidator;
-import org.neo4j.dbms.routing.RoutingOption;
-import org.neo4j.dbms.routing.RoutingService;
-import org.neo4j.dbms.routing.SingleAddressRoutingTableProvider;
+import org.neo4j.dbms.routing.*;
 import org.neo4j.dbms.systemgraph.CommunityTopologyGraphComponent;
 import org.neo4j.dbms.systemgraph.SystemDatabaseProvider;
-import org.neo4j.fabric.bootstrap.FabricServicesBootstrap;
 import org.neo4j.graphdb.factory.module.GlobalModule;
 import org.neo4j.internal.kernel.api.security.CommunitySecurityLog;
 import org.neo4j.io.device.DeviceMapper;
 import org.neo4j.kernel.api.security.SecurityModule;
 import org.neo4j.kernel.api.security.provider.NoAuthSecurityProvider;
 import org.neo4j.kernel.api.security.provider.SecurityProvider;
-import org.neo4j.kernel.database.DatabaseId;
-import org.neo4j.kernel.database.DatabaseIdRepository;
-import org.neo4j.kernel.database.DatabaseReferenceRepository;
-import org.neo4j.kernel.database.MapCachingDatabaseIdRepository;
-import org.neo4j.kernel.database.MapCachingDatabaseReferenceRepository;
-import org.neo4j.kernel.database.SystemGraphDatabaseIdRepository;
-import org.neo4j.kernel.database.SystemGraphDatabaseReferenceRepository;
-import org.neo4j.kernel.impl.api.CommitProcessFactory;
-import org.neo4j.kernel.impl.factory.CommunityCommitProcessFactory;
+import org.neo4j.kernel.database.*;
+import org.neo4j.kernel.impl.api.TransactionalProcessFactory;
 import org.neo4j.kernel.impl.factory.DbmsInfo;
+import org.neo4j.kernel.impl.factory.DefaultTransactionalProcessFactory;
 import org.neo4j.kernel.impl.pagecache.CommunityIOControllerService;
 import org.neo4j.kernel.impl.security.URIAccessRules;
-import org.neo4j.kernel.internal.event.GlobalTransactionEventListeners;
-import org.neo4j.kernel.lifecycle.LifeSupport;
 import org.neo4j.kernel.lifecycle.Lifecycle;
 import org.neo4j.kernel.lifecycle.LifecycleAdapter;
 import org.neo4j.logging.InternalLogProvider;
@@ -122,7 +88,7 @@ public class DozerDbEditionModule extends AbstractEditionModule implements Defau
     private final InternalLogProvider logProvider;
     private final CommunitySecurityLog securityLog;
     protected DatabaseStateService databaseStateService;
-    protected ReadOnlyDatabases globalReadOnlyChecker;
+    // protected ReadOnlyDatabases globalReadOnlyChecker;
     private Lifecycle defaultDatabaseInitializer = new LifecycleAdapter();
     private SystemGraphComponents systemGraphComponents;
 
@@ -209,14 +175,14 @@ public class DozerDbEditionModule extends AbstractEditionModule implements Defau
         globalModule.getGlobalLife().add(databaseLifecycles.allDatabaseShutdown());
         globalModule.getGlobalDependencies().satisfyDependency(delegate(databaseRepository));
         globalModule.getGlobalDependencies().satisfyDependency(databaseStateService);
-
-        globalReadOnlyChecker = createGlobalReadOnlyChecker(
-                databaseRepository,
-                globalModule.getGlobalConfig(),
-                globalModule.getTransactionEventListeners(),
-                globalModule.getGlobalLife(),
-                globalModule.getLogService().getInternalLogProvider());
-
+        /*
+                globalReadOnlyChecker = createGlobalReadOnlyChecker(
+                        databaseRepository,
+                        globalModule.getGlobalConfig(),
+                        globalModule.getTransactionEventListeners(),
+                        globalModule.getGlobalLife(),
+                        globalModule.getLogService().getInternalLogProvider());
+        */
         globalModule
                 .getTransactionEventListeners()
                 .registerTransactionEventListener(SYSTEM_DATABASE_NAME, databaseIdCacheCleaner);
@@ -253,22 +219,22 @@ public class DozerDbEditionModule extends AbstractEditionModule implements Defau
                         new SystemGraphTransactionEventListenerAdapter(multiDatabaseManager, globalModule));
     }
 
-    private static ReadOnlyDatabases createGlobalReadOnlyChecker(
-            DatabaseContextProvider<?> databaseContextProvider,
-            Config globalConfig,
-            GlobalTransactionEventListeners txListeners,
-            LifeSupport globalLife,
-            InternalLogProvider logProvider) {
-        var systemGraphReadOnlyLookup =
-                new SystemGraphReadOnlyDatabaseLookupFactory(databaseContextProvider, logProvider);
-        var configReadOnlyLookup =
-                new ConfigBasedLookupFactory(globalConfig, databaseContextProvider.databaseIdRepository());
-        var globalChecker = new DefaultReadOnlyDatabases(systemGraphReadOnlyLookup, configReadOnlyLookup);
-        var configListener = new ConfigReadOnlyDatabaseListener(globalChecker, globalConfig);
-        var systemGraphListener = new SystemGraphReadOnlyListener(txListeners, globalChecker);
-        globalLife.add(configListener);
-        globalLife.add(systemGraphListener);
-        return globalChecker;
+    @Override
+    public void createGlobalReadOnlyChecker(
+            SystemDatabaseProvider systemDatabaseProvider,
+            DatabaseIdRepository databaseIdRepository,
+            GlobalModule globalModule) {
+        globalReadOnlyChecker = createGlobalReadOnlyChecker(
+                Set.of(SystemGraphReadOnlyDatabaseLookupFactory.DEFAULT_PROVIDER),
+                systemDatabaseProvider,
+                databaseIdRepository,
+                ReadOnlyChangeListener.NO_OP,
+                globalModule);
+        globalModule
+                .getGlobalLife()
+                .add(new SystemGraphReadOnlyListener(
+                        globalModule.getTransactionEventListeners(), globalReadOnlyChecker));
+        globalModule.getGlobalDependencies().satisfyDependency(globalReadOnlyChecker);
     }
 
     @Override
@@ -402,7 +368,10 @@ public class DozerDbEditionModule extends AbstractEditionModule implements Defau
         globalModule.getGlobalDependencies().satisfyDependency(CommunitySecurityLog.NULL_LOG);
         if (globalModule.getGlobalConfig().get(GraphDatabaseSettings.auth_enabled)) {
             SecurityModule securityModule = new CommunitySecurityModule(
-                    globalModule.getLogService(), globalModule.getGlobalConfig(), globalModule.getGlobalDependencies());
+                    globalModule.getLogService(),
+                    globalModule.getGlobalConfig(),
+                    globalModule.getGlobalDependencies(),
+                    securityLog);
             securityModule.setup();
             return securityModule;
         }
@@ -424,36 +393,25 @@ public class DozerDbEditionModule extends AbstractEditionModule implements Defau
         return globalModule.getGlobalDependencies().resolveDependency(BoltGraphDatabaseManagementServiceSPI.class);
     }
 
-    protected CommitProcessFactory createCommitProcessFactory() {
-        return new CommunityCommitProcessFactory();
+    protected TransactionalProcessFactory createCommitProcessFactory() {
+        return new DefaultTransactionalProcessFactory();
     }
 
     @Override
     public void bootstrapQueryRouterServices(DatabaseManagementService databaseManagementService) {
         DatabaseContextProvider<? extends DatabaseContext> databaseRepository =
                 globalModule.getGlobalDependencies().resolveDependency(DatabaseContextProvider.class);
-        if (globalModule.getGlobalConfig().get(GraphDatabaseInternalSettings.query_router_new_stack)) {
-            var queryRouterBootstrap = new CommunityQueryRouterBootstrap(
-                    globalModule.getGlobalLife(),
-                    globalModule.getGlobalDependencies(),
-                    globalModule.getLogService(),
-                    databaseRepository,
-                    databaseReferenceRepo,
-                    CommunitySecurityLog.NULL_LOG);
-            globalModule
-                    .getGlobalDependencies()
-                    .satisfyDependency(queryRouterBootstrap.bootstrapServices(databaseManagementService));
-        } else {
-            var fabricServicesBootstrap = new FabricServicesBootstrap.Community(
-                    globalModule.getGlobalLife(),
-                    globalModule.getGlobalDependencies(),
-                    globalModule.getLogService(),
-                    databaseRepository,
-                    databaseReferenceRepo);
-            globalModule
-                    .getGlobalDependencies()
-                    .satisfyDependency(fabricServicesBootstrap.bootstrapServices(databaseManagementService));
-        }
+
+        var queryRouterBootstrap = new CommunityQueryRouterBootstrap(
+                globalModule.getGlobalLife(),
+                globalModule.getGlobalDependencies(),
+                globalModule.getLogService(),
+                databaseRepository,
+                databaseReferenceRepo,
+                CommunitySecurityLog.NULL_LOG);
+        globalModule
+                .getGlobalDependencies()
+                .satisfyDependency(queryRouterBootstrap.bootstrapServices(databaseManagementService));
     }
 
     @Override

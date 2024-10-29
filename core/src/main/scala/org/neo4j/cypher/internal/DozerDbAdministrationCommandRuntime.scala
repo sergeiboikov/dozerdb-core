@@ -29,12 +29,16 @@ import org.neo4j.common.DependencyResolver
 import org.neo4j.configuration.Config
 import org.neo4j.configuration.GraphDatabaseSettings
 import org.neo4j.configuration.helpers.DatabaseNameValidator
+import org.neo4j.cypher.internal.AdministrationCommandRuntime.DatabaseNameFields
 import org.neo4j.cypher.internal.AdministrationCommandRuntime.NameFields
 import org.neo4j.cypher.internal.AdministrationCommandRuntime.followerError
+import org.neo4j.cypher.internal.AdministrationCommandRuntime.getDatabaseNameFields
 import org.neo4j.cypher.internal.AdministrationCommandRuntime.getNameFields
 import org.neo4j.cypher.internal.AdministrationCommandRuntime.internalKey
 import org.neo4j.cypher.internal.AdministrationCommandRuntime.makeRenameExecutionPlan
 import org.neo4j.cypher.internal.AdministrationCommandRuntime.runtimeStringValue
+import org.neo4j.cypher.internal.AdministrationCommandRuntime.userNamePropKey
+import org.neo4j.cypher.internal.DatabaseStatus
 import org.neo4j.cypher.internal.administration.DoNothingExecutionPlanner
 import org.neo4j.cypher.internal.administration.DozerDbAlterUserExecutionPlanner
 import org.neo4j.cypher.internal.administration.DozerDbCreateUserExecutionPlanner
@@ -45,16 +49,20 @@ import org.neo4j.cypher.internal.administration.ShowDatabasesExecutionPlanner
 import org.neo4j.cypher.internal.administration.ShowUsersExecutionPlanner
 import org.neo4j.cypher.internal.administration.SystemProcedureCallPlanner
 import org.neo4j.cypher.internal.ast.AdministrationAction
+import org.neo4j.cypher.internal.ast.DatabaseName
 import org.neo4j.cypher.internal.ast.DbmsAction
+import org.neo4j.cypher.internal.ast.DropDatabaseAliasAction
 import org.neo4j.cypher.internal.ast.StartDatabaseAction
 import org.neo4j.cypher.internal.ast.StopDatabaseAction
 import org.neo4j.cypher.internal.ast.UnassignableAction
 import org.neo4j.cypher.internal.expressions.Parameter
+import org.neo4j.cypher.internal.logical.plans.AdministrationCommandLogicalPlan
 import org.neo4j.cypher.internal.logical.plans.AllowedNonAdministrationCommands
 import org.neo4j.cypher.internal.logical.plans.AlterUser
 import org.neo4j.cypher.internal.logical.plans.AssertAllowedDatabaseAction
 import org.neo4j.cypher.internal.logical.plans.AssertAllowedDbmsActions
 import org.neo4j.cypher.internal.logical.plans.AssertAllowedDbmsActionsOrSelf
+import org.neo4j.cypher.internal.logical.plans.AssertCanDropDatabase
 import org.neo4j.cypher.internal.logical.plans.AssertManagementActionNotBlocked
 import org.neo4j.cypher.internal.logical.plans.AssertNotCurrentUser
 import org.neo4j.cypher.internal.logical.plans.CheckNativeAuthentication
@@ -64,9 +72,12 @@ import org.neo4j.cypher.internal.logical.plans.DoNothingIfDatabaseExists
 import org.neo4j.cypher.internal.logical.plans.DoNothingIfDatabaseNotExists
 import org.neo4j.cypher.internal.logical.plans.DoNothingIfExists
 import org.neo4j.cypher.internal.logical.plans.DoNothingIfNotExists
+import org.neo4j.cypher.internal.logical.plans.DropDatabase
 import org.neo4j.cypher.internal.logical.plans.DropUser
+import org.neo4j.cypher.internal.logical.plans.EnsureDatabaseSafeToDelete
 import org.neo4j.cypher.internal.logical.plans.EnsureNameIsNotAmbiguous
 import org.neo4j.cypher.internal.logical.plans.EnsureNodeExists
+import org.neo4j.cypher.internal.logical.plans.EnsureValidNonSystemDatabase
 import org.neo4j.cypher.internal.logical.plans.EnsureValidNumberOfDatabases
 import org.neo4j.cypher.internal.logical.plans.LogSystemCommand
 import org.neo4j.cypher.internal.logical.plans.LogicalPlan
@@ -77,6 +88,8 @@ import org.neo4j.cypher.internal.logical.plans.SetOwnPassword
 import org.neo4j.cypher.internal.logical.plans.ShowCurrentUser
 import org.neo4j.cypher.internal.logical.plans.ShowDatabase
 import org.neo4j.cypher.internal.logical.plans.ShowUsers
+import org.neo4j.cypher.internal.logical.plans.StartDatabase
+import org.neo4j.cypher.internal.logical.plans.StopDatabase
 import org.neo4j.cypher.internal.logical.plans.SystemProcedureCall
 import org.neo4j.cypher.internal.procs.ActionMapper
 import org.neo4j.cypher.internal.procs.AuthorizationAndPredicateExecutionPlan
@@ -89,6 +102,7 @@ import org.neo4j.cypher.internal.procs.ThrowException
 import org.neo4j.cypher.internal.procs.UpdatingSystemCommandExecutionPlan
 import org.neo4j.cypher.rendering.QueryRenderer
 import org.neo4j.dbms.api.DatabaseLimitReachedException
+import org.neo4j.dbms.systemgraph.TopologyGraphDbmsModel
 import org.neo4j.exceptions.CantCompileQueryException
 import org.neo4j.exceptions.CypherExecutionException
 import org.neo4j.exceptions.DatabaseAdministrationOnFollowerException
@@ -105,12 +119,15 @@ import org.neo4j.internal.kernel.api.security.SecurityContext
 import org.neo4j.internal.kernel.api.security.Segment
 import org.neo4j.kernel.api.exceptions.Status
 import org.neo4j.kernel.api.exceptions.Status.HasStatus
+import org.neo4j.kernel.database.NamedDatabaseId
 import org.neo4j.kernel.database.NormalizedDatabaseName
 import org.neo4j.kernel.impl.api.security.RestrictedAccessMode
+import org.neo4j.kernel.impl.query.TransactionalContext.DatabaseMode
 import org.neo4j.server.security.systemgraph.UserSecurityGraphComponent
 import org.neo4j.values.storable.BooleanValue
 import org.neo4j.values.storable.LongValue
 import org.neo4j.values.storable.TextValue
+import org.neo4j.values.storable.UTF8StringValue
 import org.neo4j.values.storable.Value
 import org.neo4j.values.storable.Values
 import org.neo4j.values.virtual.MapValue
@@ -149,7 +166,11 @@ case class DozerDbAdministrationCommandRuntime(
     )
   }
 
-  override def compileToExecutable(state: LogicalQuery, context: RuntimeContext): ExecutionPlan = {
+  override def compileToExecutable(
+    state: LogicalQuery,
+    context: RuntimeContext,
+    databaseMode: DatabaseMode
+  ): ExecutionPlan = {
     // Either the logical plan is a command that the partial function logicalToExecutable provides/understands OR we throw an error
     logicalToExecutable.applyOrElse(state.logicalPlan, throwCantCompile).apply(
       AdministrationCommandRuntimeContext(context)
@@ -310,7 +331,8 @@ case class DozerDbAdministrationCommandRuntime(
         val sourcePlan: Option[ExecutionPlan] =
           Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
         makeRenameExecutionPlan(
-          "User",
+          PrivilegeGQLCodeEntity.User(),
+          userNamePropKey,
           fromUserName,
           toUserName,
           params => {
@@ -352,7 +374,124 @@ case class DozerDbAdministrationCommandRuntime(
           sourcePlan
         )
 
-    /*
+    case StopDatabase(source: AdministrationCommandLogicalPlan, databaseName: DatabaseName) => (context) => {
+
+        val nameFields: DatabaseNameFields = getDatabaseNameFields(
+          "databaseName",
+          databaseName
+        )
+        val nameValue: Value = nameFields.nameValue
+        // TopologyGraphDbmsModel.DATABASE_NAME
+        // Cypher query to drop the database node from the system graph
+        UpdatingSystemCommandExecutionPlan(
+          "" +
+            "StopDatabase",
+          normalExecutionEngine,
+          securityAuthorizationHandler,
+          s"""
+             | MATCH (database:Database {name: $$name})
+             | SET database.status = '${DatabaseStatus.Offline.stringValue()}',
+             |     database.stopped_at = datetime(),
+             |     database.started_at = null,
+             |     database.updated_at = datetime()
+             | RETURN database.name as name, database.currentStatus as status
+    """.stripMargin,
+          VirtualValues.map(
+            Array("name"),
+            Array(nameValue)
+          ),
+          QueryHandler
+            .handleError {
+              case (error, _) =>
+                new IllegalStateException(
+                  s"Could not STOP the database called ${nameValue}.",
+                  error
+                )
+            },
+          Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
+        )
+      }
+
+    case StartDatabase(source: AdministrationCommandLogicalPlan, databaseName: DatabaseName) => (context) => {
+
+        val nameFields: DatabaseNameFields = getDatabaseNameFields(
+          "databaseName",
+          databaseName
+        )
+        val nameValue: Value = nameFields.nameValue
+        // TopologyGraphDbmsModel.DATABASE_NAME
+        // Cypher query to drop the database node from the system graph
+        UpdatingSystemCommandExecutionPlan(
+          "" +
+            "StartDatabase",
+          normalExecutionEngine,
+          securityAuthorizationHandler,
+          s"""
+             | MATCH (database:Database {name: $$name})
+             | SET database.status = '${DatabaseStatus.Online.stringValue()}',
+             |     database.stopped_at = null,
+             |     database.started_at = datetime(),
+             |     database.updated_at = datetime()
+             | RETURN database.name as name, database.currentStatus as status
+    """.stripMargin,
+          VirtualValues.map(
+            Array("name"),
+            Array(nameValue)
+          ),
+          QueryHandler
+            .handleError {
+              case (error, _) =>
+                new IllegalStateException(
+                  s"Could not START the database called ${nameValue}.",
+                  error
+                )
+            },
+          Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
+        )
+      }
+
+    case DropDatabase(source, databaseName, additionalAction, forceComposite, aliasAction) => (context) =>
+        {
+          val config: Config = resolver.resolveDependency(classOf[Config])
+
+          val nameFields: DatabaseNameFields = getDatabaseNameFields(
+            "databaseName",
+            databaseName
+          )
+          val nameValue: Value = nameFields.nameValue
+
+          // Cypher query to drop the database node from the system graph
+          UpdatingSystemCommandExecutionPlan(
+            "DropDatabase",
+            normalExecutionEngine,
+            securityAuthorizationHandler,
+            s"""
+               | MATCH (database:Database {name: $$name})
+               | OPTIONAL MATCH (database)-[r]-()
+               | OPTIONAL MATCH (databaseName:DatabaseName {name: $$name})
+               | OPTIONAL MATCH (databaseName)-[r2]-()
+               | DELETE r, database, r2, databaseName
+               | WITH $$name as droppedName
+               | CREATE (deletedDatabase:DeletedDatabase {name: droppedName, timestamp: timestamp()})
+               | RETURN droppedName
+    """.stripMargin,
+            VirtualValues.map(
+              Array("name"),
+              Array(nameValue)
+            ),
+            QueryHandler
+              .handleError {
+                case (error, _) =>
+                  new IllegalStateException(
+                    s"Could not drop the database called ${nameValue}.",
+                    error
+                  )
+              },
+            Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
+          )
+        }
+
+      /*
     Function Name: CreateDatabase
 
     The `CreateDatabase` function is used to create a new graph database within Neo4j. This function handles the setup, configuration, and execution of creating a new database, ensuring the data is properly validated and stored.
@@ -382,7 +521,7 @@ case class DozerDbAdministrationCommandRuntime(
 
     Errors:
     If the database name is invalid, an `InvalidArgumentException` will be thrown with the validation error message. If the database creation fails during the execution of the plan, an `IllegalStateException` is thrown indicating that the new database could not be created.
-     */
+       */
 
     /**
      * case class CreateDatabase(
@@ -474,6 +613,110 @@ case class DozerDbAdministrationCommandRuntime(
     case EnsureNameIsNotAmbiguous(source, databaseName, isComposite) =>
       (context) => fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context)
 
+    case AssertCanDropDatabase(
+        source: PrivilegePlan,
+        databaseName: DatabaseName, // NamespacedName from parent.
+        action: DbmsAction
+      ) => (context) =>
+        AuthorizationAndPredicateExecutionPlan(
+          securityAuthorizationHandler,
+          (params, securityContext) =>
+            Seq((
+              action,
+              securityContext.allowsAdminAction(
+                new AdminActionOnResource(
+                  ActionMapper.asKernelAction(action),
+                  new DatabaseScope(runtimeStringValue(databaseName, params)),
+                  Segment.ALL
+                )
+              )
+            )),
+          violationMessage = adminActionErrorMessage
+          // source = getSource(source, context)
+        )
+
+    // TODO: We need to implement this better.
+    case EnsureDatabaseSafeToDelete(
+        source: AdministrationCommandLogicalPlan,
+        databaseName: DatabaseName,
+        aliasAction: DropDatabaseAliasAction
+      ) => (context) =>
+        val valuePropNames: Array[String] = Array("name")
+        val nameFields: DatabaseNameFields = getDatabaseNameFields(
+          "databaseName",
+          databaseName
+        )
+        val nameValue: Value = nameFields.nameValue
+
+        UpdatingSystemCommandExecutionPlan(
+          "EnsureDatabaseSafeToDelete",
+          normalExecutionEngine,
+          securityAuthorizationHandler,
+          s"""
+             | MATCH (database:Database {name: $$name}) RETURN database.name as name
+        """.stripMargin,
+          VirtualValues.map(
+            valuePropNames,
+            Array(
+              nameValue
+            )
+          ),
+          QueryHandler
+            .handleNoResult(params =>
+              Some(ThrowException(
+                new CypherExecutionException(
+                  s"Database not found:  '${runtimeStringValue(databaseName, params)}'."
+                )
+              ))
+            )
+            .handleResult((_, name, params) => {
+              // val nameString = name.asInstanceOf[String].toString()
+              Continue
+            }),
+          Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
+        )
+
+    case EnsureValidNonSystemDatabase(source, databaseName, action, aliasName) => (context) =>
+        val valuePropNames: Array[String] = Array("name")
+        val nameFields: DatabaseNameFields = getDatabaseNameFields(
+          "databaseName",
+          databaseName
+        )
+        val nameValue: Value = nameFields.nameValue
+
+        UpdatingSystemCommandExecutionPlan(
+          "EnsureValidNonSystemDatabase",
+          normalExecutionEngine,
+          securityAuthorizationHandler,
+          s"""
+             | MATCH (database:Database {name: $$name}) RETURN database.name as name
+        """.stripMargin,
+          VirtualValues.map(
+            valuePropNames,
+            Array(
+              nameValue
+            )
+          ),
+          QueryHandler
+            .handleNoResult(params =>
+              Some(ThrowException(
+                new CypherExecutionException(
+                  s"Database not found:  '${runtimeStringValue(databaseName, params)}'."
+                )
+              ))
+            )
+            .handleResult((_, name, params) => {
+              val nameString = name.asInstanceOf[UTF8StringValue].stringValue()
+              // If the nameString is the system database then throw an error
+              if (NamedDatabaseId.SYSTEM_DATABASE_NAME.equalsIgnoreCase(nameString)) {
+                throw new CypherExecutionException(
+                  "You can not delete the system database."
+                );
+              }
+              Continue
+            }),
+          Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
+        )
     case EnsureValidNumberOfDatabases(source) => (context) =>
         UpdatingSystemCommandExecutionPlan(
           "EnsureValidNumberOfDatabases",
@@ -505,11 +748,11 @@ case class DozerDbAdministrationCommandRuntime(
         )
           .planShowDatabases(scope, verbose, symbols.map(_.name), yields, returns)
 
-    case DoNothingIfNotExists(source, label, name, operation, valueMapper) => context =>
+    case DoNothingIfNotExists(source, entity, name, operation, valueMapper) => context =>
         val sourcePlan: Option[ExecutionPlan] =
           Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
         DoNothingExecutionPlanner(normalExecutionEngine, securityAuthorizationHandler).planDoNothingIfNotExists(
-          label,
+          entity,
           name,
           valueMapper,
           operation,
@@ -546,11 +789,11 @@ case class DozerDbAdministrationCommandRuntime(
         )
 
     // Ensure that the role or user exists before being dropped
-    case EnsureNodeExists(source, label, name, valueMapper, extraFilter, labelDescription, action) => context =>
+    case EnsureNodeExists(source, entity, name, valueMapper, extraFilter, labelDescription, action) => context =>
         val sourcePlan: Option[ExecutionPlan] =
           Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
         EnsureNodeExistsExecutionPlanner(normalExecutionEngine, securityAuthorizationHandler)
-          .planEnsureNodeExists(label, name, valueMapper, extraFilter, labelDescription, action, sourcePlan)
+          .planEnsureNodeExists(entity, name, valueMapper, extraFilter, labelDescription, action, sourcePlan)
 
     // SUPPORT PROCEDURES (need to be cleared before here)
     case SystemProcedureCall(_, call, returns, _, checkCredentialsExpired) => _ =>
@@ -624,13 +867,6 @@ case class DozerDbAdministrationCommandRuntime(
     }
     logicalToExecutable.isDefinedAt(logicalPlan)
   }
-}
-
-object DatabaseStatus extends Enumeration {
-  type Status = TextValue
-
-  val Online: TextValue = Values.utf8Value("online")
-  val Offline: TextValue = Values.utf8Value("offline")
 }
 
 object DozerDbAdministrationCommandRuntime {
