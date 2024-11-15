@@ -31,10 +31,6 @@ import org.neo4j.configuration.GraphDatabaseSettings;
 import org.neo4j.dbms.api.DatabaseExistsException;
 import org.neo4j.dbms.api.DatabaseManagementException;
 import org.neo4j.dbms.systemgraph.TopologyGraphDbmsModel;
-import org.neo4j.gqlstatus.ErrorClassification;
-import org.neo4j.gqlstatus.ErrorGqlStatusObjectImplementation;
-import org.neo4j.gqlstatus.GqlMessageParams;
-import org.neo4j.gqlstatus.GqlStatusInfoCodes;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.factory.module.GlobalModule;
 import org.neo4j.kernel.database.Database;
@@ -224,12 +220,7 @@ public final class MultiDatabaseManager {
             this.counter.increaseStartCount();
         } catch (Throwable t) {
 
-            var gql = ErrorGqlStatusObjectImplementation.from(GqlStatusInfoCodes.STATUS_51N40)
-                    .withParam(GqlMessageParams.namedDatabaseId, namedDatabaseId.name())
-                    .withClassification(ErrorClassification.DATABASE_ERROR)
-                    .build();
-            context.fail(new UnableToStartDatabaseException(
-                    gql, format("An error occurred! Unable to start `%s`.", namedDatabaseId), t));
+            context.fail(UnableToStartDatabaseException.unableToStartDb(namedDatabaseId, t));
         }
     }
 

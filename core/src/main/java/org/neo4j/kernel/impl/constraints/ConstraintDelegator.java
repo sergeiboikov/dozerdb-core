@@ -17,14 +17,17 @@ import org.eclipse.collections.impl.set.mutable.primitive.IntHashSet;
 import org.neo4j.exceptions.KernelException;
 import org.neo4j.internal.kernel.api.*;
 import org.neo4j.internal.kernel.api.exceptions.schema.ConstraintValidationException;
+import org.neo4j.internal.schema.IndexDescriptor;
 import org.neo4j.io.IOUtils;
 import org.neo4j.io.pagecache.context.CursorContext;
 import org.neo4j.kernel.api.exceptions.schema.NodePropertyExistenceException;
 import org.neo4j.kernel.api.exceptions.schema.RelationshipPropertyExistenceException;
 import org.neo4j.memory.MemoryTracker;
 import org.neo4j.storageengine.api.StorageProperty;
+import org.neo4j.storageengine.api.txstate.EntityChange;
 import org.neo4j.storageengine.api.txstate.RelationshipModifications;
 import org.neo4j.storageengine.api.txstate.TxStateVisitor;
+import org.neo4j.values.storable.ValueTuple;
 
 /**
  * The `ConstraintDelegator` class extends the `TxStateVisitor.Delegator` to validate constraints on nodes and relationships
@@ -84,24 +87,24 @@ public class ConstraintDelegator extends TxStateVisitor.Delegator {
     @Override
     public void visitRelationshipModifications(RelationshipModifications relationshipModifications)
             throws ConstraintValidationException {
+
         relationshipModifications
                 .creations()
-                .forEach((id, type, startNode, endNode, addedProperties) -> this.checkRel(id));
+                .forEach((id, type, startNode, endNode, addedProperties, changedProperties, removedProperties) -> {
+                    try {
+                        this.checkRel(id);
+                    } catch (RelationshipPropertyExistenceException e) {
+                        throw new RuntimeException(e);
+                    }
+                });
+
         super.visitRelationshipModifications(relationshipModifications);
     }
 
     @Override
-    public void visitRelPropertyChanges(
-            long id,
-            int type,
-            long startNode,
-            long endNode,
-            Iterable<StorageProperty> added,
-            Iterable<StorageProperty> changed,
-            IntIterable removed)
-            throws ConstraintValidationException {
-        this.checkRel(id);
-        super.visitRelPropertyChanges(id, type, startNode, endNode, added, changed, removed);
+    public void visitValueIndexUpdate(
+            IndexDescriptor descriptor, long entityId, ValueTuple values, EntityChange entityChange) {
+        // TODO: implement  super.visitValueIndexUpdate(descriptor, entityId, values, entityChange);
     }
 
     @Override
@@ -111,11 +114,21 @@ public class ConstraintDelegator extends TxStateVisitor.Delegator {
     }
 
     /**
-     * Checks constraints on the specified node by its ID.
-     * Validates that required properties are present for the node.
+     * Validates that the specified node meets property existence constraints.
+     * <p>
+     * This method performs several checks on the node with the given {@code nodeId}:
+     * <ul>
+     *     <li>If no property constraints are defined for nodes, it exits early.</li>
+     *     <li>If the node does not exist, an {@code IllegalStateException} is thrown.</li>
+     *     <li>If the node has no labels, it exits early since labels are required for constraint validation.</li>
+     *     <li>It then populates the node's properties into {@code mutablePropertyKeys}.</li>
+     *     <li>Finally, it checks these properties against the constraints defined in the {@code ConstraintChecker}.</li>
+     * </ul>
+     * </p>
      *
-     * @param nodeId The ID of the node to check.
-     * @throws NodePropertyExistenceException If the specified node does not meet the property existence constraints.
+     * @param nodeId The ID of the node to be validated.
+     * @throws NodePropertyExistenceException If the node fails to meet the required property existence constraints.
+     * @throws IllegalStateException If the node does not exist in the database.
      */
     private void checkNode(long nodeId) throws NodePropertyExistenceException {
         // If no property constraints are defined, skip the check

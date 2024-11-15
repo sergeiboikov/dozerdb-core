@@ -676,7 +676,7 @@ case class DozerDbAdministrationCommandRuntime(
           Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
         )
 
-    case EnsureValidNonSystemDatabase(source, databaseName, action, aliasName) => (context) =>
+    case EnsureValidNonSystemDatabase(source, command, databaseName, action, aliasName) => (context) =>
         val valuePropNames: Array[String] = Array("name")
         val nameFields: DatabaseNameFields = getDatabaseNameFields(
           "databaseName",
@@ -748,10 +748,11 @@ case class DozerDbAdministrationCommandRuntime(
         )
           .planShowDatabases(scope, verbose, symbols.map(_.name), yields, returns)
 
-    case DoNothingIfNotExists(source, entity, name, operation, valueMapper) => context =>
+    case DoNothingIfNotExists(source, command, entity, name, operation, valueMapper) => context =>
         val sourcePlan: Option[ExecutionPlan] =
           Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
         DoNothingExecutionPlanner(normalExecutionEngine, securityAuthorizationHandler).planDoNothingIfNotExists(
+          command,
           entity,
           name,
           valueMapper,
@@ -759,41 +760,45 @@ case class DozerDbAdministrationCommandRuntime(
           sourcePlan
         )
 
-    case DoNothingIfExists(source, label, name, valueMapper) => context =>
+    case DoNothingIfExists(source, command, label, name, valueMapper) => context =>
         val sourcePlan: Option[ExecutionPlan] =
           Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
         DoNothingExecutionPlanner(normalExecutionEngine, securityAuthorizationHandler).planDoNothingIfExists(
+          command,
           label,
           name,
           valueMapper,
           sourcePlan
         )
 
-    case DoNothingIfDatabaseNotExists(source, name, operation, databaseTypeFilter) => context =>
+    case DoNothingIfDatabaseNotExists(source, command, name, operation, databaseTypeFilter) => context =>
         val sourcePlan: Option[ExecutionPlan] =
           Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
         DoNothingExecutionPlanner(normalExecutionEngine, securityAuthorizationHandler).planDoNothingIfDatabaseNotExists(
+          command,
           name,
           operation,
           sourcePlan,
           databaseTypeFilter
         )
 
-    case DoNothingIfDatabaseExists(source, name, databaseTypeFilter) => context =>
+    case DoNothingIfDatabaseExists(source, command, name, databaseTypeFilter) => context =>
         val sourcePlan: Option[ExecutionPlan] =
           Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
         DoNothingExecutionPlanner(normalExecutionEngine, securityAuthorizationHandler).planDoNothingIfDatabaseExists(
+          command,
           name,
           sourcePlan,
           databaseTypeFilter
         )
 
     // Ensure that the role or user exists before being dropped
-    case EnsureNodeExists(source, entity, name, valueMapper, extraFilter, labelDescription, action) => context =>
+    case EnsureNodeExists(source, command, entity, name, valueMapper, extraFilter, labelDescription, action) =>
+      context =>
         val sourcePlan: Option[ExecutionPlan] =
           Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
         EnsureNodeExistsExecutionPlanner(normalExecutionEngine, securityAuthorizationHandler)
-          .planEnsureNodeExists(entity, name, valueMapper, extraFilter, labelDescription, action, sourcePlan)
+          .planEnsureNodeExists(command, entity, name, valueMapper, extraFilter, labelDescription, action, sourcePlan)
 
     // SUPPORT PROCEDURES (need to be cleared before here)
     case SystemProcedureCall(_, call, returns, _, checkCredentialsExpired) => _ =>
@@ -817,8 +822,9 @@ case class DozerDbAdministrationCommandRuntime(
           QueryHandler
             .handleError {
               case (error: HasStatus, p) if error.status() == Status.Cluster.NotALeader =>
-                new DatabaseAdministrationOnFollowerException(
-                  s"User '${currentUser(p)}' failed to alter their own password: $followerError",
+                DatabaseAdministrationOnFollowerException.notALeader(
+                  "ALTER CURRENT USER SET PASSWORD",
+                  s"User '${currentUser(p)}' failed to alter their own password",
                   error
                 )
               case (error: Neo4jException, _) => error

@@ -292,7 +292,8 @@ public class DozerDbEditionModule extends AbstractEditionModule implements Defau
                 () -> true,
                 defaultDatabaseResolver,
                 databaseReferenceRepo,
-                true);
+                true,
+                globalModule.getGlobalClock());
     }
 
     @Override

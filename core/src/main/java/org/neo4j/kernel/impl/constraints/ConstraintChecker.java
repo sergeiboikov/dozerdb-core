@@ -20,6 +20,7 @@ import org.neo4j.collection.PrimitiveArrays;
 import org.neo4j.internal.kernel.api.CursorFactory;
 import org.neo4j.internal.kernel.api.Read;
 import org.neo4j.internal.kernel.api.TokenSet;
+import org.neo4j.internal.kernel.api.exceptions.schema.ConstraintValidationException;
 import org.neo4j.internal.kernel.api.exceptions.schema.ConstraintValidationException.Phase;
 import org.neo4j.internal.schema.ConstraintDescriptor;
 import org.neo4j.internal.schema.LabelSchemaDescriptor;
@@ -264,15 +265,14 @@ public class ConstraintChecker {
                     ConstraintDescriptor constraintDescriptor = constraintDescriptorIterator.next();
 
                     if (constraintDescriptor.enforcesPropertyExistence()) {
-                        throw new NodePropertyExistenceException(
+                        Function<LabelSchemaDescriptor, ConstraintDescriptor> constraintDescriptorFunction =
+                                (descriptorVar) -> ConstraintDescriptorFactory.existsForSchema(descriptorVar, false);
+                        throw NodePropertyExistenceException.propertyPresenceViolation(
                                 labelSchemaDescriptor,
-                                constraintDescriptor.isNodeKeyConstraint()
-                                        ? ConstraintDescriptorFactory::keyForSchema
-                                        : (descriptorVar) ->
-                                                ConstraintDescriptorFactory.existsForSchema(descriptorVar, false),
-                                Phase.VALIDATION,
-                                nodeId,
-                                storageReader.tokenNameLookup());
+                                storageReader.tokenNameLookup(),
+                                constraintDescriptorFunction.apply(labelSchemaDescriptor),
+                                ConstraintValidationException.Phase.VERIFICATION,
+                                nodeId);
                     }
                 }
 
@@ -312,15 +312,19 @@ public class ConstraintChecker {
                     ConstraintDescriptor constraintDescriptor = constraintDescriptorIterator.next();
 
                     if (constraintDescriptor.enforcesPropertyExistence()) {
-                        throw new RelationshipPropertyExistenceException(
-                                relationTypeSchemaDescriptor,
+
+                        ConstraintDescriptor constraintDescriptorToUse =
                                 constraintDescriptor.isRelationshipKeyConstraint()
-                                        ? ConstraintDescriptorFactory::keyForSchema
-                                        : (descriptorVar) ->
-                                                ConstraintDescriptorFactory.existsForSchema(descriptorVar, false),
+                                        ? ConstraintDescriptorFactory.keyForSchema(relationTypeSchemaDescriptor)
+                                        : ConstraintDescriptorFactory.existsForSchema(
+                                                relationTypeSchemaDescriptor, false);
+
+                        throw RelationshipPropertyExistenceException.propertyPresenceViolation(
+                                relationTypeSchemaDescriptor,
+                                storageReader.tokenNameLookup(),
+                                constraintDescriptorToUse,
                                 Phase.VALIDATION,
-                                relId,
-                                storageReader.tokenNameLookup());
+                                relId);
                     }
                 }
 

@@ -48,7 +48,8 @@ import org.neo4j.values.storable.Value;
 @ServiceProvider
 public class DozerDbConstraintSemantics extends StandardConstraintSemantics {
 
-    protected final StandardConstraintRuleAccessor accessor = new StandardConstraintRuleAccessor();
+    protected final StandardConstraintRuleAccessor standardConstraintRuleAccessor =
+            new StandardConstraintRuleAccessor();
 
     public DozerDbConstraintSemantics() {
         this(1);
@@ -129,45 +130,41 @@ public class DozerDbConstraintSemantics extends StandardConstraintSemantics {
         // TODO: Implement
     }
 
-    protected ConstraintDescriptor readNonStandardConstraint(ConstraintDescriptor constraint, String errorMessage) {
-        // Need to check if constraint supports property existence - throw an error or return constraint.
-        return constraint;
-    }
-
     @Override
     public ConstraintDescriptor createUniquenessConstraintRule(
             long ruleId, UniquenessConstraintDescriptor descriptor, long indexId) {
-        return accessor.createUniquenessConstraintRule(ruleId, descriptor, indexId);
+        return standardConstraintRuleAccessor.createUniquenessConstraintRule(ruleId, descriptor, indexId);
     }
 
     @Override
     public ConstraintDescriptor createKeyConstraintRule(long ruleId, KeyConstraintDescriptor descriptor, long indexId)
             throws CreateConstraintFailureException {
-        return this.accessor.createKeyConstraintRule(ruleId, descriptor, indexId);
+        return this.standardConstraintRuleAccessor.createKeyConstraintRule(ruleId, descriptor, indexId);
     }
 
     @Override
     public ConstraintDescriptor createExistenceConstraint(long ruleId, ConstraintDescriptor descriptor)
             throws CreateConstraintFailureException {
-        return this.accessor.createExistenceConstraint(ruleId, descriptor);
+        return this.standardConstraintRuleAccessor.createExistenceConstraint(ruleId, descriptor);
     }
 
     @Override
     public ConstraintDescriptor createPropertyTypeConstraint(long ruleId, TypeConstraintDescriptor descriptor)
             throws CreateConstraintFailureException {
-        return this.accessor.createPropertyTypeConstraint(ruleId, descriptor);
+        return this.standardConstraintRuleAccessor.createPropertyTypeConstraint(ruleId, descriptor);
     }
 
     @Override
-    public ConstraintDescriptor createRelationshipEndpointConstraint(
-            long ruleId, RelationshipEndpointConstraintDescriptor descriptor) throws CreateConstraintFailureException {
-        return this.accessor.createRelationshipEndpointConstraint(ruleId, descriptor);
+    public ConstraintDescriptor createRelationshipEndpointLabelConstraint(
+            long ruleId, RelationshipEndpointLabelConstraintDescriptor descriptor)
+            throws CreateConstraintFailureException {
+        return this.standardConstraintRuleAccessor.createRelationshipEndpointLabelConstraint(ruleId, descriptor);
     }
 
     @Override
-    public ConstraintDescriptor createLabelCoexistenceConstraint(
-            long ruleId, LabelCoexistenceConstraintDescriptor descriptor) throws CreateConstraintFailureException {
-        return this.accessor.createLabelCoexistenceConstraint(ruleId, descriptor);
+    public ConstraintDescriptor createNodeLabelExistenceConstraint(
+            long ruleId, NodeLabelExistenceConstraintDescriptor descriptor) throws CreateConstraintFailureException {
+        return this.standardConstraintRuleAccessor.createNodeLabelExistenceConstraint(ruleId, descriptor);
     }
 
     @Override
@@ -189,25 +186,48 @@ public class DozerDbConstraintSemantics extends StandardConstraintSemantics {
     public void validateNodePropertyExistenceConstraint(
             NodeCursor nodeCursor,
             PropertyCursor propertyCursor,
-            LabelSchemaDescriptor descriptor,
+            LabelSchemaDescriptor schema,
             TokenNameLookup tokenNameLookup,
             boolean isDependent)
             throws CreateConstraintFailureException {
         while (nodeCursor.next()) {
-            if (this.verify(descriptor.getPropertyIds(), propertyCursor, nodeCursor)) {
+            if (this.verify(schema.getPropertyIds(), propertyCursor, nodeCursor)) {
                 continue;
             }
-            NodePropertyExistenceException nodePropertyExistenceException = new NodePropertyExistenceException(
-                    descriptor,
-                    (descriptorVar) -> ConstraintDescriptorFactory.existsForSchema(descriptorVar, false),
-                    ConstraintValidationException.Phase.VERIFICATION,
-                    nodeCursor.nodeReference(),
-                    tokenNameLookup);
+
+            ConstraintDescriptor constraintDescriptor = ConstraintDescriptorFactory.existsForSchema(schema, false);
+
+            NodePropertyExistenceException nodePropertyExistenceException =
+                    NodePropertyExistenceException.propertyPresenceViolation(
+                            schema,
+                            tokenNameLookup,
+                            constraintDescriptor,
+                            ConstraintValidationException.Phase.VERIFICATION,
+                            nodeCursor.nodeReference());
             throw new CreateConstraintFailureException(
                     nodePropertyExistenceException.constraint(), nodePropertyExistenceException);
         }
     }
-
+    /**
+     * Verifies if all specified properties exist in the given entity.
+     * <p>
+     * This method checks the presence of each property ID in the {@code propertyIds} array
+     * within the entity represented by {@code EntityCursor}. It iterates through the entity's
+     * properties using {@code PropertyCursor} and decrements a counter for each matched property.
+     * </p>
+     *
+     * <p>
+     * If all properties specified in {@code propertyIds} are found, the method returns {@code true}.
+     * Otherwise, if one or more properties are missing, it returns {@code false}.
+     * </p>
+     *
+     * @param propertyIds     an array of property IDs to verify in the entity
+     * @param propertyCursor  the {@code PropertyCursor} used to iterate over the entity's properties
+     * @param entityCursor    the {@code EntityCursor} representing the entity to be checked
+     *
+     * @return {@code true} if all properties specified in {@code propertyIds} are present in the entity;
+     *         {@code false} otherwise
+     */
     private boolean verify(int[] propertyIds, PropertyCursor propertyCursor, EntityCursor entityCursor) {
 
         entityCursor.properties(propertyCursor, PropertySelection.onlyKeysSelection(propertyIds));
@@ -290,6 +310,28 @@ public class DozerDbConstraintSemantics extends StandardConstraintSemantics {
         }
     }
 
+    /**
+     * Validates a property type constraint for a given entity.
+     * <p>
+     * This method checks if the properties associated with the specified {@code EntityCursor}
+     * meet the type requirements specified by the {@code TypeConstraintDescriptor}. It fetches
+     * the property using the {@code PropertyCursor} and verifies its value against the expected
+     * type defined in the constraint descriptor.
+     * </p>
+     *
+     * <p>
+     * If the property value does not satisfy the required type constraints, a
+     * {@code CreateConstraintFailureException} is thrown, encapsulating a
+     * {@code PropertyTypeException} that describes the specific constraint violation.
+     * </p>
+     *
+     * @param descriptor      the {@code TypeConstraintDescriptor} defining the expected property type constraint
+     * @param entityCursor    the {@code EntityCursor} representing the entity to be validated
+     * @param propertyCursor  the {@code PropertyCursor} used to access the entity's property values
+     * @param tokenNameLookup a lookup tool to convert internal token IDs to user-friendly names
+     *
+     * @throws CreateConstraintFailureException if the property type constraint is violated
+     */
     private void validateConstraint(
             TypeConstraintDescriptor descriptor,
             EntityCursor entityCursor,
@@ -314,28 +356,28 @@ public class DozerDbConstraintSemantics extends StandardConstraintSemantics {
     }
 
     @Override
-    public void validateRelationshipEndpointConstraint(
+    public void validateRelationshipEndpointLabelConstraint(
             RelationshipScanCursor relCursor,
             NodeCursor nodeCursor,
-            RelationshipEndpointConstraintDescriptor descriptor,
+            RelationshipEndpointLabelConstraintDescriptor descriptor,
             TokenNameLookup tokenNameLookup)
             throws CreateConstraintFailureException {
         // TODO: Implement
     }
 
     @Override
-    public void validateLabelCoexistenceConstraint(
+    public void validateNodeLabelExistenceConstraint(
             NodeLabelIndexCursor allNodes,
             NodeCursor nodeCursor,
-            LabelCoexistenceConstraintDescriptor descriptor,
+            NodeLabelExistenceConstraintDescriptor descriptor,
             TokenNameLookup tokenNameLookup)
             throws CreateConstraintFailureException {
         // TODO: Implement
     }
 
     @Override
-    public void validateLabelCoexistenceConstraint(
-            NodeCursor nodeCursor, LabelCoexistenceConstraintDescriptor descriptor, TokenNameLookup tokenNameLookup)
+    public void validateNodeLabelExistenceConstraint(
+            NodeCursor nodeCursor, NodeLabelExistenceConstraintDescriptor descriptor, TokenNameLookup tokenNameLookup)
             throws CreateConstraintFailureException {
         // TODO: Implement
     }
