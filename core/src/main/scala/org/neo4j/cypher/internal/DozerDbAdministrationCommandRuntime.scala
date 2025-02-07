@@ -263,11 +263,12 @@ case class DozerDbAdministrationCommandRuntime(
       context => checkAdminRightsForDBMSOrSelf(user, actions)(context)
 
     // Check that the specified user is not the logged in user (eg. for some CREATE/DROP/ALTER USER commands)
-    case AssertNotCurrentUser(source, userName, verb, violationMessage) => context =>
+    case AssertNotCurrentUser(source, userName, verb, violationMessage, errorGqlStatusObject) => context =>
         PredicateExecutionPlan(
           (params, sc) => !sc.subject().hasUsername(runtimeStringValue(userName, params)),
           onViolation = (_, _, sc) =>
             new InvalidArgumentException(
+              errorGqlStatusObject,
               s"Failed to $verb the specified user '${sc.subject().executingUser()}': $violationMessage."
             ),
           source = Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
@@ -297,7 +298,7 @@ case class DozerDbAdministrationCommandRuntime(
         val sourcePlan: Option[ExecutionPlan] =
           Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
         ShowUsersExecutionPlanner(normalExecutionEngine, securityAuthorizationHandler).planShowUsers(
-          symbols.map(_.name),
+          symbols,
           withAuth,
           yields,
           returns,
@@ -307,7 +308,7 @@ case class DozerDbAdministrationCommandRuntime(
     // SHOW CURRENT USER
     case ShowCurrentUser(symbols, yields, returns) => _ =>
         ShowUsersExecutionPlanner(normalExecutionEngine, securityAuthorizationHandler).planShowCurrentUser(
-          symbols.map(_.name),
+          symbols,
           yields,
           returns
         )
@@ -746,7 +747,7 @@ case class DozerDbAdministrationCommandRuntime(
           normalExecutionEngine,
           securityAuthorizationHandler
         )
-          .planShowDatabases(scope, verbose, symbols.map(_.name), yields, returns)
+          .planShowDatabases(scope, verbose, symbols, yields, returns)
 
     case DoNothingIfNotExists(source, command, entity, name, operation, valueMapper) => context =>
         val sourcePlan: Option[ExecutionPlan] =
@@ -847,12 +848,17 @@ case class DozerDbAdministrationCommandRuntime(
           checkCredentialsExpired = false
         )
     // Non-administration commands that are allowed on system database, e.g. SHOW PROCEDURES
-    case AllowedNonAdministrationCommands(statement) => _ =>
+    case AllowedNonAdministrationCommands(statement) => context =>
+        // While running against system will override most pre-parser options.
+        // However, we shouldn't override the Cypher version,
+        // so let's prepend the inner query with the relevant Cypher version.
+        val versionName = context.runtimeContext.cypherVersion.versionName
+        val versionString = s"CYPHER $versionName "
         SystemCommandExecutionPlan(
           "AllowedNonAdministrationCommand",
           normalExecutionEngine,
           securityAuthorizationHandler,
-          QueryRenderer.render(statement),
+          versionString + QueryRenderer.render(statement),
           MapValue.EMPTY,
           // If we have a non admin command executing in the system database, forbid it to make reads / writes
           // from the system graph. This is to prevent queries such as SHOW PROCEDURES YIELD * RETURN ()--()

@@ -17,7 +17,7 @@ import static org.neo4j.kernel.database.NamedDatabaseId.SYSTEM_DATABASE_NAME;
 import java.util.Optional;
 import java.util.UUID;
 import org.neo4j.dbms.api.DatabaseManagementException;
-import org.neo4j.dbms.api.DatabaseNotFoundException;
+import org.neo4j.dbms.api.DatabaseNotFoundHelper;
 import org.neo4j.dbms.systemgraph.TopologyGraphDbmsModel;
 import org.neo4j.graphdb.Node;
 import org.neo4j.kernel.database.DatabaseIdFactory;
@@ -81,7 +81,7 @@ public final class MultiDatabaseLifecycleService {
     private StandaloneDatabaseContext getSystemDatabaseContext() {
         return databaseRepository
                 .getDatabaseContext(NAMED_SYSTEM_DATABASE_ID)
-                .orElseThrow(() -> new DatabaseNotFoundException("database not found: " + SYSTEM_DATABASE_NAME));
+                .orElseThrow(() -> DatabaseNotFoundHelper.databaseNotFound(SYSTEM_DATABASE_NAME));
     }
 
     private Optional<StandaloneDatabaseContext> getDefaultDatabaseContext() {
@@ -92,8 +92,7 @@ public final class MultiDatabaseLifecycleService {
         var defaultDatabaseId = databaseRepository
                 .databaseIdRepository()
                 .getByName(defaultGdbName)
-                .orElseThrow(() -> new DatabaseNotFoundException(
-                        "The default graph database was not found. Default name: " + defaultGdbName));
+                .orElseThrow(() -> DatabaseNotFoundHelper.databaseNotFound(defaultGdbName));
         if (databaseRepository.getDatabaseContext(defaultDatabaseId).isPresent()) {
             throw new DatabaseManagementException(
                     "Default Graph Database Initialization failure. The databaseId with ID: " + defaultDatabaseId
