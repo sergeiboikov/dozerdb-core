@@ -27,18 +27,16 @@ package org.neo4j.cypher.internal
 
 import org.neo4j.common.DependencyResolver
 import org.neo4j.configuration.Config
+import org.neo4j.configuration.DozerDbSettings
 import org.neo4j.configuration.GraphDatabaseSettings
 import org.neo4j.configuration.helpers.DatabaseNameValidator
 import org.neo4j.cypher.internal.AdministrationCommandRuntime.DatabaseNameFields
-import org.neo4j.cypher.internal.AdministrationCommandRuntime.NameFields
-import org.neo4j.cypher.internal.AdministrationCommandRuntime.followerError
 import org.neo4j.cypher.internal.AdministrationCommandRuntime.getDatabaseNameFields
 import org.neo4j.cypher.internal.AdministrationCommandRuntime.getNameFields
 import org.neo4j.cypher.internal.AdministrationCommandRuntime.internalKey
 import org.neo4j.cypher.internal.AdministrationCommandRuntime.makeRenameExecutionPlan
 import org.neo4j.cypher.internal.AdministrationCommandRuntime.runtimeStringValue
 import org.neo4j.cypher.internal.AdministrationCommandRuntime.userNamePropKey
-import org.neo4j.cypher.internal.DatabaseStatus
 import org.neo4j.cypher.internal.administration.DoNothingExecutionPlanner
 import org.neo4j.cypher.internal.administration.DozerDbAlterUserExecutionPlanner
 import org.neo4j.cypher.internal.administration.DozerDbCreateUserExecutionPlanner
@@ -102,7 +100,6 @@ import org.neo4j.cypher.internal.procs.ThrowException
 import org.neo4j.cypher.internal.procs.UpdatingSystemCommandExecutionPlan
 import org.neo4j.cypher.rendering.QueryRenderer
 import org.neo4j.dbms.api.DatabaseLimitReachedException
-import org.neo4j.dbms.systemgraph.TopologyGraphDbmsModel
 import org.neo4j.exceptions.CantCompileQueryException
 import org.neo4j.exceptions.CypherExecutionException
 import org.neo4j.exceptions.DatabaseAdministrationOnFollowerException
@@ -133,8 +130,6 @@ import org.neo4j.values.storable.Values
 import org.neo4j.values.virtual.MapValue
 import org.neo4j.values.virtual.VirtualValues
 
-import java.util.UUID
-
 /**
  * This runtime takes on queries that work on the system database, such as multi-database and security administration commands.
  * The planning requirements for these are much simpler than normal Cypher commands, and as such the runtime stack is also different.
@@ -146,16 +141,14 @@ case class DozerDbAdministrationCommandRuntime(
     DozerDbAdministrationCommandRuntime.emptyLogicalToExecutable
 ) extends AdministrationCommandRuntime {
 
-  // TODO: This should grabbed from the neo4j.conf file or likewise.
-  // TODO: Maybe add from GraphDatabaseSettings
-  private val maximumGdbsAllowed: Long = 100
-
   override def name: String = "dozerdb enhanced community administration-commands"
 
   private lazy val securityAuthorizationHandler =
     new SecurityAuthorizationHandler(resolver.resolveDependency(classOf[AbstractSecurityLog]))
 
   private val config: Config = resolver.resolveDependency(classOf[Config])
+
+  private val maximumGdbsAllowed: Integer = config.get(DozerDbSettings.max_databases)
 
   private lazy val userSecurity: UserSecurityGraphComponent =
     resolver.resolveDependency(classOf[UserSecurityGraphComponent])
@@ -459,7 +452,8 @@ case class DozerDbAdministrationCommandRuntime(
             "databaseName",
             databaseName
           )
-          val nameValue: Value = nameFields.nameValue
+          val parameterTransformer = ParameterTransformer()
+            .convert(nameFields.nameConverter)
 
           // Cypher query to drop the database node from the system graph
           UpdatingSystemCommandExecutionPlan(
@@ -467,28 +461,29 @@ case class DozerDbAdministrationCommandRuntime(
             normalExecutionEngine,
             securityAuthorizationHandler,
             s"""
-               | MATCH (database:Database {name: $$name})
+               | MATCH (database:Database {name: $$`${nameFields.nameKey}`})
                | OPTIONAL MATCH (database)-[r]-()
-               | OPTIONAL MATCH (databaseName:DatabaseName {name: $$name})
+               | OPTIONAL MATCH (databaseName:DatabaseName {name: $$`${nameFields.nameKey}`})
                | OPTIONAL MATCH (databaseName)-[r2]-()
                | DELETE r, database, r2, databaseName
-               | WITH $$name as droppedName
+               | WITH $$`${nameFields.nameKey}` as droppedName
                | CREATE (deletedDatabase:DeletedDatabase {name: droppedName, timestamp: timestamp()})
                | RETURN droppedName
     """.stripMargin,
             VirtualValues.map(
-              Array("name"),
-              Array(nameValue)
+              Array(nameFields.nameKey),
+              Array(nameFields.nameValue)
             ),
             QueryHandler
               .handleError {
                 case (error, _) =>
                   new IllegalStateException(
-                    s"Could not drop the database called ${nameValue}.",
+                    s"Could not drop the database called ${nameFields.nameValue}.",
                     error
                   )
               },
-            Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
+            Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context)),
+            parameterTransformer = parameterTransformer
           )
         }
 
@@ -539,9 +534,8 @@ case class DozerDbAdministrationCommandRuntime(
         // TODO: Put this at top in main class.
         val config: Config = resolver.resolveDependency(classOf[Config])
         val defaultGdbNameFromConfig: String = config.get(GraphDatabaseSettings.initial_default_database)
-        val valuePropNames: Array[String] = Array("default", "name", "status", "uuid")
 
-        val nameFields: NameFields = getNameFields(
+        val nameFields = getNameFields(
           "databaseName",
           databaseName,
           valueMapper = nameString => {
@@ -555,41 +549,45 @@ case class DozerDbAdministrationCommandRuntime(
             normalizedDatabaseName.name
           }
         )
-        val nameValue: Value = nameFields.nameValue
+
+        val parameterTransformer = ParameterTransformer()
+          .convert(nameFields.nameConverter)
 
         UpdatingSystemCommandExecutionPlan(
           "CreateDatabase",
           normalExecutionEngine,
           securityAuthorizationHandler,
           s"""
-             | CREATE (database:Database)<-[:TARGETS]-(:DatabaseName {displayName: $$name, name: $$name, namespace: 'system-root', primary:true})
+             | CREATE (database:Database)<-[:TARGETS]-(:DatabaseName {displayName: $$`${nameFields.nameKey}`,
+             | name: $$`${nameFields.nameKey}`, namespace: 'system-root', primary:true})
              | SET
              | database.access = 'READ_WRITE',
              | database.created_at = datetime(),
-             | database.default = $$default,
-             | database.name = $$name,
+             | database.default =  $$default,
+             | database.name = $$`${nameFields.nameKey}`,
              | database.status = $$status,
-             | database.uuid = $$uuid
+             | database.uuid = randomUUID()
              | RETURN database.name as name, database.status as status, database.uuid as uuid
         """.stripMargin,
           VirtualValues.map(
-            valuePropNames,
+            Array(nameFields.nameKey, "default", "status"),
             Array(
-              Values.booleanValue(nameValue.equals(defaultGdbNameFromConfig)),
-              nameValue,
-              Values.stringValue(DatabaseStatus.Online.stringValue()),
-              Values.stringValue(UUID.randomUUID().toString())
+              nameFields.nameValue,
+              Values.booleanValue(nameFields.nameValue.equals(defaultGdbNameFromConfig)),
+              Values.stringValue(DatabaseStatus.Online.stringValue())
             )
           ),
           QueryHandler
             .handleError {
-              case (error, _) =>
+              case (error, params) =>
                 new IllegalStateException(
-                  s"Could not create new gdb called ${nameValue}. It most likely already exists.",
+                  s"Could not create new gdb called '${runtimeStringValue(databaseName, params)}'. It most likely already exists.",
                   error
                 )
             },
-          Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
+          Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context)),
+          parameterTransformer =
+            parameterTransformer
         )
       } // End case CreateDatabase
 
@@ -608,7 +606,6 @@ case class DozerDbAdministrationCommandRuntime(
               )
             )),
           violationMessage = adminActionErrorMessage
-          // source = getSource(action, context)
         )
 
     case EnsureNameIsNotAmbiguous(source, databaseName, isComposite) =>
