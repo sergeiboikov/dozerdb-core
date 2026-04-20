@@ -68,19 +68,19 @@ class DozerDbCompilerFactory(
     val dependencies = graph.getDependencyResolver
 
     val planner = DefaultCypherPlanner(
-        parsingConfig,
-        plannerConfig,
-        MasterCompiler.CLOCK,
-        kernelMonitors,
-        log,
-        dependencies.resolveDependency(classOf[org.neo4j.internal.kernel.api.security.AbstractSecurityLog]),
-        queryCaches,
-        cypherPlanner,
-        dependencies.resolveDependency(classOf[DatabaseReferenceRepository]),
-        CommunitySchemaCommandRuntime,
-        dependencies.resolveDependency(classOf[InternalNotificationStats]),
-        dependencies.resolveDependency(classOf[InternalUsageStats])
-      )
+      parsingConfig,
+      plannerConfig,
+      MasterCompiler.CLOCK,
+      kernelMonitors,
+      log,
+      dependencies.resolveDependency(classOf[org.neo4j.internal.kernel.api.security.AbstractSecurityLog]),
+      queryCaches,
+      cypherPlanner,
+      dependencies.resolveDependency(classOf[DatabaseReferenceRepository]),
+      CommunitySchemaCommandRuntime,
+      dependencies.resolveDependency(classOf[InternalNotificationStats]),
+      dependencies.resolveDependency(classOf[InternalUsageStats])
+    )
 
     val runtime =
       if (plannerConfig.planSystemCommands)

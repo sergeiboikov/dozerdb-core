@@ -102,8 +102,8 @@ import org.neo4j.exceptions.CypherExecutionException
 import org.neo4j.exceptions.DatabaseAdministrationOnFollowerException
 import org.neo4j.exceptions.InvalidArgumentException
 import org.neo4j.exceptions.Neo4jException
-import org.neo4j.graphdb.security.AuthorizationViolationException
 import org.neo4j.gqlstatus.PrivilegeGqlCodeEntity
+import org.neo4j.graphdb.security.AuthorizationViolationException
 import org.neo4j.internal.kernel.api.security.AbstractSecurityLog
 import org.neo4j.internal.kernel.api.security.AdminActionOnResource
 import org.neo4j.internal.kernel.api.security.AdminActionOnResource.DatabaseScope
@@ -142,6 +142,7 @@ case class DozerDbAdministrationCommandRuntime(
 
   private lazy val securityAuthorizationHandler =
     new SecurityAuthorizationHandler(resolver.resolveDependency(classOf[AbstractSecurityLog]))
+
   private lazy val securityLog =
     resolver.resolveDependency(classOf[AbstractSecurityLog])
 
@@ -304,7 +305,7 @@ case class DozerDbAdministrationCommandRuntime(
           context
         )
 
-      // CREATE [OR REPLACE] USER foo [IF NOT EXISTS] SET [PLAINTEXT | ENCRYPTED] PASSWORD 'password'
+    // CREATE [OR REPLACE] USER foo [IF NOT EXISTS] SET [PLAINTEXT | ENCRYPTED] PASSWORD 'password'
     // CREATE [OR REPLACE] USER foo [IF NOT EXISTS] SET [PLAINTEXT | ENCRYPTED] PASSWORD $password
     case createUser: CreateUser => context =>
         val sourcePlan: Option[ExecutionPlan] =
@@ -362,10 +363,10 @@ case class DozerDbAdministrationCommandRuntime(
           Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
         SetOwnPasswordExecutionPlanner(normalExecutionEngine, securityAuthorizationHandler, config, securityLog)
           .planSetOwnPassword(
-          newPassword,
-          currentPassword,
-          sourcePlan
-        )
+            newPassword,
+            currentPassword,
+            sourcePlan
+          )
 
     case StopDatabase(source: AdministrationCommandLogicalPlan, databaseName: DatabaseName) => (context) => {
 
@@ -443,50 +444,49 @@ case class DozerDbAdministrationCommandRuntime(
         )
       }
 
-    case DropDatabase(source, databaseName, additionalAction, forceComposite, aliasAction) => (context) =>
-        {
-          val config: Config = resolver.resolveDependency(classOf[Config])
+    case DropDatabase(source, databaseName, additionalAction, forceComposite, aliasAction) => (context) => {
+        val config: Config = resolver.resolveDependency(classOf[Config])
 
-          val nameFields: DatabaseNameFields = getDatabaseNameFields(
-            "databaseName",
-            databaseName
-          )
-          val parameterTransformer = ParameterTransformer()
-            .convert(nameFields.nameConverter)
+        val nameFields: DatabaseNameFields = getDatabaseNameFields(
+          "databaseName",
+          databaseName
+        )
+        val parameterTransformer = ParameterTransformer()
+          .convert(nameFields.nameConverter)
 
-          // Cypher query to drop the database node from the system graph
-          UpdatingSystemCommandExecutionPlan(
-            "DropDatabase",
-            normalExecutionEngine,
-            securityAuthorizationHandler,
-            s"""
-               | MATCH (database:Database {name: $$`${nameFields.nameKey}`})
-               | OPTIONAL MATCH (database)-[r]-()
-               | OPTIONAL MATCH (databaseName:DatabaseName {name: $$`${nameFields.nameKey}`})
-               | OPTIONAL MATCH (databaseName)-[r2]-()
-               | DELETE r, database, r2, databaseName
-               | WITH $$`${nameFields.nameKey}` as droppedName
-               | CREATE (deletedDatabase:DeletedDatabase {name: droppedName, timestamp: timestamp()})
-               | RETURN droppedName
+        // Cypher query to drop the database node from the system graph
+        UpdatingSystemCommandExecutionPlan(
+          "DropDatabase",
+          normalExecutionEngine,
+          securityAuthorizationHandler,
+          s"""
+             | MATCH (database:Database {name: $$`${nameFields.nameKey}`})
+             | OPTIONAL MATCH (database)-[r]-()
+             | OPTIONAL MATCH (databaseName:DatabaseName {name: $$`${nameFields.nameKey}`})
+             | OPTIONAL MATCH (databaseName)-[r2]-()
+             | DELETE r, database, r2, databaseName
+             | WITH $$`${nameFields.nameKey}` as droppedName
+             | CREATE (deletedDatabase:DeletedDatabase {name: droppedName, timestamp: timestamp()})
+             | RETURN droppedName
     """.stripMargin,
-            VirtualValues.map(
-              Array(nameFields.nameKey),
-              Array(nameFields.nameValue)
-            ),
-            QueryHandler
-              .handleError {
-                case (error, _) =>
-                  new IllegalStateException(
-                    s"Could not drop the database called ${nameFields.nameValue}.",
-                    error
-                  )
-              },
-            Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context)),
-            parameterTransformer = parameterTransformer
-          )
-        }
+          VirtualValues.map(
+            Array(nameFields.nameKey),
+            Array(nameFields.nameValue)
+          ),
+          QueryHandler
+            .handleError {
+              case (error, _) =>
+                new IllegalStateException(
+                  s"Could not drop the database called ${nameFields.nameValue}.",
+                  error
+                )
+            },
+          Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context)),
+          parameterTransformer = parameterTransformer
+        )
+      }
 
-      /*
+    /*
     Function Name: CreateDatabase
 
     The `CreateDatabase` function is used to create a new graph database within Neo4j. This function handles the setup, configuration, and execution of creating a new database, ensuring the data is properly validated and stored.
@@ -516,7 +516,7 @@ case class DozerDbAdministrationCommandRuntime(
 
     Errors:
     If the database name is invalid, an `InvalidArgumentException` will be thrown with the validation error message. If the database creation fails during the execution of the plan, an `IllegalStateException` is thrown indicating that the new database could not be created.
-       */
+     */
 
     /**
      * case class CreateDatabase(
@@ -594,16 +594,18 @@ case class DozerDbAdministrationCommandRuntime(
         AuthorizationAndPredicateExecutionPlan(
           securityLog,
           (params, securityContext) =>
-            actions.map(action => (
-              action: AdministrationAction,
-              securityContext.allowsAdminAction(
-                new AdminActionOnResource(
-                  ActionMapper.asKernelAction(action),
-                  new DatabaseScope(""),
-                  Segment.ALL
+            actions.map(action =>
+              (
+                action: AdministrationAction,
+                securityContext.allowsAdminAction(
+                  new AdminActionOnResource(
+                    ActionMapper.asKernelAction(action),
+                    new DatabaseScope(""),
+                    Segment.ALL
+                  )
                 )
               )
-            )),
+            ),
           violationMessage = adminActionErrorMessage
         )
 
@@ -661,7 +663,10 @@ case class DozerDbAdministrationCommandRuntime(
           QueryHandler
             .handleNoResult(params =>
               Some(ThrowException(
-                new CypherExecutionException(s"Database not found:  '${runtimeStringValue(databaseName, params)}'.", null)
+                new CypherExecutionException(
+                  s"Database not found:  '${runtimeStringValue(databaseName, params)}'.",
+                  null
+                )
               ))
             )
             .handleResult((_, name, params) => {
@@ -695,7 +700,10 @@ case class DozerDbAdministrationCommandRuntime(
           QueryHandler
             .handleNoResult(params =>
               Some(ThrowException(
-                new CypherExecutionException(s"Database not found:  '${runtimeStringValue(databaseName, params)}'.", null)
+                new CypherExecutionException(
+                  s"Database not found:  '${runtimeStringValue(databaseName, params)}'.",
+                  null
+                )
               ))
             )
             .handleResult((_, name, params) => {
@@ -760,11 +768,15 @@ case class DozerDbAdministrationCommandRuntime(
           sourcePlan
         )
 
-    case DoNothingIfDatabaseNotExists(source, command, name, operation, databaseTypeFilter, updateContextParams) => context =>
+    case DoNothingIfDatabaseNotExists(source, command, name, operation, databaseTypeFilter, updateContextParams) =>
+      context =>
         val sourcePlan: Option[ExecutionPlan] =
           Some(fullLogicalToExecutable.applyOrElse(source, throwCantCompile).apply(context))
         if (updateContextParams)
-          DoNothingExecutionPlanner(normalExecutionEngine, securityAuthorizationHandler).planDoNothingIfDatabaseNotExistsUpdateContext(
+          DoNothingExecutionPlanner(
+            normalExecutionEngine,
+            securityAuthorizationHandler
+          ).planDoNothingIfDatabaseNotExistsUpdateContext(
             command,
             name,
             operation,
@@ -773,7 +785,10 @@ case class DozerDbAdministrationCommandRuntime(
             context
           )
         else
-          DoNothingExecutionPlanner(normalExecutionEngine, securityAuthorizationHandler).planDoNothingIfDatabaseNotExists(
+          DoNothingExecutionPlanner(
+            normalExecutionEngine,
+            securityAuthorizationHandler
+          ).planDoNothingIfDatabaseNotExists(
             command,
             name,
             operation,

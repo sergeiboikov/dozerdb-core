@@ -12,6 +12,7 @@ package org.neo4j.server;
 import static org.neo4j.kernel.impl.factory.DbmsInfo.ENTERPRISE;
 
 import java.nio.file.Path;
+import java.time.Instant;
 import org.neo4j.configuration.Config;
 import org.neo4j.dbms.api.DatabaseManagementService;
 import org.neo4j.graphdb.config.Configuration;
@@ -57,5 +58,10 @@ public class DozerDbBootstrapper extends NeoBootstrapper {
     @Override
     protected boolean checkLicenseAgreement(Path homeDir, Configuration config, boolean daemonMode) {
         return true;
+    }
+
+    @Override
+    protected void logOnLicenseEvaluation(Path homeDir, Configuration config, Instant databaseCreationDate) {
+        // Community-compatible DozerDB bootstrap: no additional license logging.
     }
 }
