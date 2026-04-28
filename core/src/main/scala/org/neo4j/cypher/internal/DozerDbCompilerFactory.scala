@@ -28,12 +28,12 @@ package org.neo4j.cypher.internal
 import org.neo4j.cypher.internal.cache.CypherQueryCaches
 import org.neo4j.cypher.internal.compiler.CypherParsingConfig
 import org.neo4j.cypher.internal.compiler.CypherPlannerConfiguration
-import org.neo4j.cypher.internal.frontend.phases.InternalSyntaxUsageStats
+import org.neo4j.cypher.internal.frontend.notification.InternalNotificationStats
+import org.neo4j.cypher.internal.frontend.phases.InternalUsageStats
 import org.neo4j.cypher.internal.options.CypherPlannerOption
 import org.neo4j.cypher.internal.options.CypherRuntimeOption
-import org.neo4j.cypher.internal.planning.CypherPlanner
+import org.neo4j.cypher.internal.planning.DefaultCypherPlanner
 import org.neo4j.cypher.internal.runtime.CypherRuntimeConfiguration
-import org.neo4j.cypher.internal.util.InternalNotificationStats
 import org.neo4j.kernel.GraphDatabaseQueryService
 import org.neo4j.kernel.database.DatabaseReferenceRepository
 import org.neo4j.logging.InternalLog
@@ -67,19 +67,20 @@ class DozerDbCompilerFactory(
 
     val dependencies = graph.getDependencyResolver
 
-    val planner =
-      CypherPlanner(
-        parsingConfig,
-        plannerConfig,
-        MasterCompiler.CLOCK,
-        kernelMonitors,
-        log,
-        queryCaches,
-        cypherPlanner,
-        dependencies.resolveDependency(classOf[DatabaseReferenceRepository]),
-        dependencies.resolveDependency(classOf[InternalNotificationStats]),
-        dependencies.resolveDependency(classOf[InternalSyntaxUsageStats])
-      )
+    val planner = DefaultCypherPlanner(
+      parsingConfig,
+      plannerConfig,
+      MasterCompiler.CLOCK,
+      kernelMonitors,
+      log,
+      dependencies.resolveDependency(classOf[org.neo4j.internal.kernel.api.security.AbstractSecurityLog]),
+      queryCaches,
+      cypherPlanner,
+      dependencies.resolveDependency(classOf[DatabaseReferenceRepository]),
+      CommunitySchemaCommandRuntime,
+      dependencies.resolveDependency(classOf[InternalNotificationStats]),
+      dependencies.resolveDependency(classOf[InternalUsageStats])
+    )
 
     val runtime =
       if (plannerConfig.planSystemCommands)
@@ -91,6 +92,7 @@ class DozerDbCompilerFactory(
       planner,
       runtime,
       CommunityRuntimeContextManager(log, runtimeConfig),
+      CommunitySchemaCommandRuntime,
       kernelMonitors,
       queryCaches
     )

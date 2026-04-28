@@ -8,26 +8,26 @@
   <parent>
     <groupId>org.neo4j</groupId>
     <artifactId>parent</artifactId>
-    <version>5.24.2</version>
+    <version>2026.03.0</version>
   </parent>
 
 
   <groupId>org.dozerdb</groupId>
   <artifactId>dozerdb-core-parent</artifactId>
-  <version>5.24.2-1.1.0-alpha.1</version>
+  <version>2026.03.0-1.1.0</version>
   <packaging>pom</packaging>
   <name>dozerdb-core-parent</name>
   <description>DozerDB Plugin Core for Neo4j</description>
   <properties>
-    <neo4j.version>5.24.2</neo4j.version>
+    <neo4j.version>2026.03.0</neo4j.version>
 
     <!-- We define the dozerdb-core.version here because we want to keep the main project version the same as the parent neo4j project version. -->
-    <dozerdb-core.version>5.24.2-1.1.0-alpha.1</dozerdb-core.version>
+    <dozerdb-core.version>2026.03.0-1.1.0</dozerdb-core.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <java.version>17</java.version>
-    <maven.compiler.source>17</maven.compiler.source>
-    <maven.compiler.target>17</maven.compiler.target>
-    <maven.compiler.release>17</maven.compiler.release>
+    <java.version>21</java.version>
+    <maven.compiler.source>21</maven.compiler.source>
+    <maven.compiler.target>21</maven.compiler.target>
+    <maven.compiler.release>21</maven.compiler.release>
     <maven.build.timestamp.format>yyMMddHHmmssSSS</maven.build.timestamp.format>
   </properties>
   <organization>
@@ -73,16 +73,6 @@
       <plugins>
 
 
-        <!-- We want to disable the licensing-maven-plugin which is inherited from the parent. -->
-        <plugin>
-          <groupId>org.neo4j.build.plugins</groupId>
-          <artifactId>licensing-maven-plugin</artifactId>
-          <configuration>
-            <skip>true</skip>
-          </configuration>
-        </plugin>
-
-
         <!-- Disable the maven-enforcer-plugin which tries to enforce the use of all org.neo4j packages -->
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
@@ -94,7 +84,7 @@
         <plugin>
           <groupId>com.mycila</groupId>
           <artifactId>license-maven-plugin</artifactId>
-          <version>4.2</version>
+          <version>4.5</version>
           <configuration>
             <skip>true</skip>
           </configuration>
@@ -111,7 +101,7 @@
           <!-- Generates LICENSE.txt files -->
           <groupId>org.codehaus.mojo</groupId>
           <artifactId>license-maven-plugin</artifactId>
-          <version>2.2.0</version>
+          <version>2.4.0</version>
           <configuration>
 
           </configuration>
@@ -167,6 +157,30 @@
 
     </pluginManagement>
   </build>
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.neo4j</groupId>
+        <artifactId>annotations</artifactId>
+        <version>${neo4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.logging.log4j</groupId>
+        <artifactId>log4j-api</artifactId>
+        <version>2.25.4</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.logging.log4j</groupId>
+        <artifactId>log4j-core</artifactId>
+        <version>2.25.4</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.logging.log4j</groupId>
+        <artifactId>log4j-layout-template-json</artifactId>
+        <version>2.25.4</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
   <dependencies>
     <dependency>
       <groupId>org.neo4j.build</groupId>
@@ -201,11 +215,6 @@
     <dependency>
       <groupId>org.neo4j</groupId>
       <artifactId>neo4j-lucene-index</artifactId>
-      <version>${neo4j.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>org.neo4j</groupId>
-      <artifactId>neo4j-fulltext-index</artifactId>
       <version>${neo4j.version}</version>
     </dependency>
     <dependency>
@@ -269,19 +278,7 @@
 
     <dependency>
       <groupId>org.neo4j</groupId>
-      <artifactId>neo4j-cypher</artifactId>
-      <version>${neo4j.version}</version>
-    </dependency>
-
-    <dependency>
-      <groupId>org.neo4j</groupId>
       <artifactId>neo4j-cypher-runtime-util</artifactId>
-      <version>${neo4j.version}</version>
-    </dependency>
-
-    <dependency>
-      <groupId>org.neo4j</groupId>
-      <artifactId>neo4j-record-storage-engine</artifactId>
       <version>${neo4j.version}</version>
     </dependency>
     <dependency>
@@ -332,7 +329,7 @@
     <dependency>
       <groupId>org.junit.platform</groupId>
       <artifactId>junit-platform-launcher</artifactId>
-      <version>${junit.platform.version}</version>
+      <version>${junit.version}</version>
       <scope>provided</scope>
       <exclusions>
         <exclusion>
@@ -344,9 +341,9 @@
 
 
     <dependency>
-      <groupId>com.propensive</groupId>
-      <artifactId>magnolia_${scala.binary.version}</artifactId>
-      <version>0.17.0</version>
+                <groupId>com.softwaremill.magnolia1_2</groupId>
+                <artifactId>magnolia_${scala.binary.version}</artifactId>
+                <version>1.1.8</version>
     </dependency>
   </dependencies>
 </project>

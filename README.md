@@ -6,7 +6,7 @@ DozerDb enhances Neo4j core / AKA Neo4j Community Edition with enterprise featur
 
 This project contains the plugin's core features which are responsible for bootstrapping into Neo4j Community Edition. 
 
-See https://github.com/dozerdb/dozerdb-plugin for the plugin build project which combines the enhanced browser and core together into the plugin.
+See https://github.com/sergeiboikov/dozerdb-plugin for the plugin build project which combines the enhanced browser and core together into the plugin.
 
 See https://dozerdb.org for installation instructions.
 

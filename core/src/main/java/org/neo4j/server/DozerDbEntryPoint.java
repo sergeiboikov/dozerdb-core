@@ -73,6 +73,6 @@ public class DozerDbEntryPoint implements EntryPoint {
 
     @Override
     public int getPriority() {
-        return Priority.LOW.ordinal();
+        return Priority.MEDIUM.ordinal();
     }
 }
