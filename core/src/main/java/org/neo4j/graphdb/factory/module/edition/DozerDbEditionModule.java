@@ -4,7 +4,9 @@
  */
 package org.neo4j.graphdb.factory.module.edition;
 
+import org.neo4j.cypher.internal.javacompat.DozerDbCypherEngineProvider;
 import org.neo4j.graphdb.factory.module.GlobalModule;
+import org.neo4j.kernel.impl.query.QueryEngineProvider;
 
 /**
  * Thin wrapper around the current community edition module.
@@ -16,5 +18,10 @@ import org.neo4j.graphdb.factory.module.GlobalModule;
 public class DozerDbEditionModule extends CommunityEditionModule {
     public DozerDbEditionModule(GlobalModule globalModule) {
         super(globalModule);
+    }
+
+    @Override
+    public QueryEngineProvider queryEngineProvider() {
+        return new DozerDbCypherEngineProvider();
     }
 }

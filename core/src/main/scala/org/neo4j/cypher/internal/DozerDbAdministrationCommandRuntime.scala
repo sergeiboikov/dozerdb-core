@@ -153,6 +153,9 @@ case class DozerDbAdministrationCommandRuntime(
   private lazy val userSecurity: UserSecurityGraphComponent =
     resolver.resolveDependency(classOf[UserSecurityGraphComponent])
 
+  private lazy val databaseLifecycleBridge =
+    new DozerDatabaseLifecycleBridge(resolver)
+
   def throwCantCompile(unknownPlan: LogicalPlan): Nothing = {
     throw CantCompileQueryException.planNotRecognisedInAdminCommand(unknownPlan.getClass.getSimpleName)
   }
@@ -388,13 +391,19 @@ case class DozerDbAdministrationCommandRuntime(
              |     database.stopped_at = datetime(),
              |     database.started_at = null,
              |     database.updated_at = datetime()
-             | RETURN database.name as name, database.currentStatus as status
+             | RETURN database.name as name, database.status as status
     """.stripMargin,
           VirtualValues.map(
             Array("name"),
             Array(nameValue)
           ),
           QueryHandler
+            .handleResult { (offset, _, params) =>
+              if (offset == 0) {
+                databaseLifecycleBridge.stop(runtimeStringValue(databaseName, params))
+              }
+              Continue
+            }
             .handleError {
               case (error, _) =>
                 new IllegalStateException(
@@ -426,13 +435,19 @@ case class DozerDbAdministrationCommandRuntime(
              |     database.stopped_at = null,
              |     database.started_at = datetime(),
              |     database.updated_at = datetime()
-             | RETURN database.name as name, database.currentStatus as status
+             | RETURN database.name as name, database.status as status
     """.stripMargin,
           VirtualValues.map(
             Array("name"),
             Array(nameValue)
           ),
           QueryHandler
+            .handleResult { (offset, _, params) =>
+              if (offset == 0) {
+                databaseLifecycleBridge.start(runtimeStringValue(databaseName, params))
+              }
+              Continue
+            }
             .handleError {
               case (error, _) =>
                 new IllegalStateException(
@@ -474,6 +489,12 @@ case class DozerDbAdministrationCommandRuntime(
             Array(nameFields.nameValue)
           ),
           QueryHandler
+            .handleResult { (offset, _, params) =>
+              if (offset == 0) {
+                databaseLifecycleBridge.drop(runtimeStringValue(databaseName, params))
+              }
+              Continue
+            }
             .handleError {
               case (error, _) =>
                 new IllegalStateException(
@@ -577,6 +598,15 @@ case class DozerDbAdministrationCommandRuntime(
             )
           ),
           QueryHandler
+            .handleResult { (offset, value, params) =>
+              if (offset == 2) {
+                databaseLifecycleBridge.createAndStart(
+                  runtimeStringValue(databaseName, params),
+                  value.asInstanceOf[TextValue].stringValue()
+                )
+              }
+              Continue
+            }
             .handleError {
               case (error, params) =>
                 new IllegalStateException(
